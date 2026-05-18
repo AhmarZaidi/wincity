@@ -278,11 +278,11 @@ def _query_battery_hw():
 
 
 def _fmt_rate(mw):
-    """Format a mW rate value for display: '+3.8 W', '5.2 W', or '—'."""
+    """Format a mW rate value for display: '+3.8 W', '-5.2 W', or '—'."""
     if mw is None:
         return "—"
     w = abs(mw) / 1000.0
-    sign = "+" if mw > 0 else ""
+    sign = "+" if mw > 0 else "-"
     return f"{sign}{w:.1f} W"
 
 
