@@ -418,19 +418,25 @@ class BatteryPopup:
     _TH = 28   # title row height
     _SH = 13   # separator block height
     _RH = 26   # info row height
-    _QH = 30   # quit row height
+    _QH   = 30   # action bar row height
+    _TTPH = 18   # tooltip strip height below action bar
 
     _IC = {
-        "status":  "\uE8A1",   # Info
-        "thunder": "\uE945",   # Lightning
-        "pct":     "\uE83F",   # BatteryFull
-        "time":    "\uE916",   # Timer
-        "rate":    "\uE7EF",   # PlugConnected
-        "elapsed": "\uE81C",   # History
-        "screen":  "\uE7F4",   # TVMonitor
-        "power":   "\uE7E8",   # PowerButton
-        "health":  "\uEB52",   # HeartFill
-        "close":   "\uE8BB",   # Cancel
+        "status":      "\uE8A1",   # Info
+        "thunder":     "\uE945",   # Lightning
+        "pct":         "\uE83F",   # BatteryFull
+        "time":        "\uE916",   # Timer
+        "rate":        "\uE7EF",   # PlugConnected
+        "elapsed":     "\uE81C",   # History
+        "screen":      "\uE7F4",   # TVMonitor
+        "power":       "\uE7E8",   # PowerButton
+        "health":      "\uEB52",   # HeartFill
+        # Action bar
+        "startup_on":  "\uE73E",   # CheckboxFilled (startup enabled)
+        "startup_off": "\uE739",   # Checkbox (startup disabled)
+        "folder":      "\uE8B7",   # Folder
+        "settings":    "\uE713",   # Settings
+        "close":       "\uE7E8",   # PowerButton (quit — better than x)
     }
 
     def __init__(self, root, wx, wy, ww, wh, bat, label, secs,
@@ -465,11 +471,26 @@ class BatteryPopup:
         s  = _dpi_scale()
         pw = max(int(self._MIN_W * s), self._MIN_W)
         ph = int((self._PY + self._TH + self._SH
-                  + 8 * self._RH + self._SH + self._QH + self._PY) * s)
+                  + 8 * self._RH + self._SH + self._QH + self._TTPH + self._PY) * s)
 
-        # Pre-compute quit button y bounds for click/hover detection
-        self._quit_y0 = int((self._PY + self._TH + self._SH + 8 * self._RH + self._SH) * s)
-        self._quit_y1 = self._quit_y0 + int(self._QH * s)
+        self._startup_on        = False  # placeholder toggle state
+        self._pw, self._ph, self._s = pw, ph, s
+        self._img_cache         = {}     # (hover_key, startup_on) -> PhotoImage
+
+        # Action bar y bounds (all buttons share the same row)
+        self._bar_y0 = int((self._PY + self._TH + self._SH + 8 * self._RH + self._SH) * s)
+        self._bar_y1 = self._bar_y0 + int(self._QH * s)
+
+        # Button x bounds for hit-testing
+        _b   = int(self._QH * s)
+        _g   = int(4         * s)
+        _pxi = int(self._PX  * s)
+        self._btn_xr = {
+            "startup":  (_pxi,               _pxi + _b),
+            "folder":   (_pxi + _b + _g,     _pxi + 2*_b + _g),
+            "settings": (_pxi + 2*(_b+_g),   _pxi + 3*_b + 2*_g),
+            "quit":     (pw - _pxi - _b,     pw - _pxi),
+        }
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -482,9 +503,9 @@ class BatteryPopup:
                               bg=self._TC, highlightthickness=0)
         self._cv.pack()
 
-        self._photo_n = ImageTk.PhotoImage(self._render(pw, ph, s, False))
-        self._photo_h = ImageTk.PhotoImage(self._render(pw, ph, s, True))
-        self._img_id  = self._cv.create_image(0, 0, anchor="nw", image=self._photo_n)
+        _init_img    = ImageTk.PhotoImage(self._render(pw, ph, s, None))
+        self._img_cache[(None, self._startup_on)] = _init_img
+        self._img_id = self._cv.create_image(0, 0, anchor="nw", image=_init_img)
         self._cv.bind("<Button-1>", self._on_click)
         self._cv.bind("<Motion>",   self._on_motion)
         self._cv.bind("<Leave>",    self._on_leave)
@@ -510,7 +531,7 @@ class BatteryPopup:
 
     # ── Rendering ─────────────────────────────────────────────────────────
 
-    def _render(self, w, h, s, quit_hover):
+    def _render(self, w, h, s, hover_key):
         r = POPUP_CORNER_RADIUS
 
         def a(rgb): return rgb + (255,)
@@ -565,15 +586,47 @@ class BatteryPopup:
         d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
         y += int(self._SH * s)
 
-        # Quit row
-        qy = y + int(self._QH * s) // 2
-        if quit_hover:
-            d.rectangle([px - 4, y + 2, w - px + 4, y + int(self._QH * s) - 2],
-                         fill=a(self._hov))
-        d.text((px + int(11 * s), qy), self._IC["close"],
-               font=ifnt, fill=a(self._red), anchor="mm")
-        d.text((px + int(26 * s), qy), "Quit",
-               font=nfnt, fill=a(self._red), anchor="lm")
+        # Action bar — 3 icon buttons on the left, quit on the right
+        b      = int(self._QH * s)   # button slot width (square)
+        g      = int(4  * s)         # gap between adjacent buttons
+        bar_y  = y + b // 2          # vertical centre of the action bar
+
+        _btns = [
+            ("startup",  self._IC["startup_on" if self._startup_on else "startup_off"]),
+            ("folder",   self._IC["folder"]),
+            ("settings", self._IC["settings"]),
+            ("quit",     self._IC["close"]),
+        ]
+        _cx = {
+            "startup":  px + b // 2,
+            "folder":   px + b + g + b // 2,
+            "settings": px + 2*(b + g) + b // 2,
+            "quit":     w - px - b // 2,
+        }
+        _tips = {
+            "startup":  f"Run at Startup: {'On' if self._startup_on else 'Off'}",
+            "folder":   "Open File Location",
+            "settings": "Settings",
+            "quit":     "Quit",
+        }
+
+        for btn_key, glyph in _btns:
+            cx      = _cx[btn_key]
+            hov     = (hover_key == btn_key)
+            is_quit = (btn_key == "quit")
+            if hov:
+                bx0 = cx - b // 2
+                bx1 = cx + b // 2
+                d.rounded_rectangle([bx0, y + int(2 * s), bx1, y + b - int(2 * s)],
+                                     radius=int(4 * s), fill=a(self._hov))
+            ic_col = self._red if is_quit else (self._fg if hov else self._icol)
+            d.text((cx, bar_y), glyph, font=ifnt, fill=a(ic_col), anchor="mm")
+
+        # Tooltip strip — shown below action bar when a button is hovered
+        if hover_key in _tips:
+            tip_y = y + b + int(self._TTPH * s) // 2
+            d.text((w // 2, tip_y), _tips[hover_key],
+                   font=nfnt, fill=a(self._fg2), anchor="mm")
 
         # Composite onto transparent key — corners outside rounded rect become invisible
         result = Image.new("RGB", (w, h), self._TC_RGB)
@@ -622,18 +675,39 @@ class BatteryPopup:
 
     # ── Interaction ───────────────────────────────────────────────────────
 
+    def _btn_hit(self, x, y):
+        """Return the action-bar button key at canvas (x, y), or None."""
+        if not (self._bar_y0 <= y < self._bar_y1):
+            return None
+        for key, (x0, x1) in self._btn_xr.items():
+            if x0 <= x < x1:
+                return key
+        return None
+
+    def _refresh_image(self, hover_key):
+        """Display the cached (or freshly rendered) image for the given hover state."""
+        ck = (hover_key, self._startup_on)
+        if ck not in self._img_cache:
+            self._img_cache[ck] = ImageTk.PhotoImage(
+                self._render(self._pw, self._ph, self._s, hover_key))
+        self._cv.itemconfig(self._img_id, image=self._img_cache[ck])
+
     def _on_click(self, event):
-        if self._quit_y0 <= event.y < self._quit_y1:
+        btn = self._btn_hit(event.x, event.y)
+        if btn == "quit":
             self._quit_cb()
+        elif btn == "startup":
+            self._startup_on = not self._startup_on
+            self._img_cache.clear()   # icon changes — invalidate all cached renders
+            self._refresh_image("startup")
 
     def _on_motion(self, event):
-        in_quit = self._quit_y0 <= event.y < self._quit_y1
-        self._cv.itemconfig(self._img_id,
-                             image=self._photo_h if in_quit else self._photo_n)
-        self._cv.config(cursor="hand2" if in_quit else "")
+        btn = self._btn_hit(event.x, event.y)
+        self._refresh_image(btn)
+        self._cv.config(cursor="hand2" if btn else "")
 
     def _on_leave(self, _e=None):
-        self._cv.itemconfig(self._img_id, image=self._photo_n)
+        self._refresh_image(None)
         self._cv.config(cursor="")
 
     def _schedule_close(self):
