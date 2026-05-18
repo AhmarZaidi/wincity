@@ -30,8 +30,11 @@ RENDER_SCALE        = 8   # internal supersampling (higher = crisper; 4-8 recomm
 VISIBILITY_POLL_MS  = 500 # ms between taskbar visibility checks (lower = snappier hide/show)
 
 # ── Hover popup ────────────────────────────────────────────────────────────
-POPUP_Y_OFFSET  = 20    # px gap between popup bottom and widget top (increase to move up)
-POPUP_CORNER_RADIUS = 12    # corner radius of the hover popup in pixels
+POPUP_Y_OFFSET      = 20   # px gap between popup bottom and widget top (increase to move up)
+POPUP_CORNER_RADIUS = 12   # corner radius of the hover popup in pixels
+POPUP_TITLE_SIZE    = 16   # font size (pt) for the popup title "BatteryBar"
+POPUP_TEXT_SIZE     = 12   # font size (pt) for info row labels and values
+POPUP_ICON_SIZE     = 16   # font size (pt) for MDL2 icons in the popup
 
 # ── Windows API ───────────────────────────────────────────────────────────────
 user32 = ctypes.windll.user32
@@ -238,10 +241,11 @@ class BatteryPopup:
         "close":   "\uE8BB",   # Cancel
     }
 
-    def __init__(self, root, wx, wy, ww, wh, bat, label, quit_cb):
-        self._quit_cb = quit_cb
-        self._bat     = bat
-        self._label   = label
+    def __init__(self, root, wx, wy, ww, wh, bat, label, quit_cb, close_cb):
+        self._quit_cb  = quit_cb
+        self._close_cb = close_cb
+        self._bat      = bat
+        self._label    = label
         dark = _is_dark_mode()
 
         if dark:
@@ -287,6 +291,9 @@ class BatteryPopup:
         self._cv.bind("<Button-1>", self._on_click)
         self._cv.bind("<Motion>",   self._on_motion)
         self._cv.bind("<Leave>",    self._on_leave)
+        # Close popup when user clicks anywhere outside it
+        self.win.bind("<FocusOut>", lambda _e: self._schedule_close())
+        root.bind("<Button-1>",     lambda _e: self._schedule_close(), add="+")
 
         px = wx + ww // 2 - pw // 2
         py = wy - ph - POPUP_Y_OFFSET
@@ -318,9 +325,9 @@ class BatteryPopup:
         d.rounded_rectangle([0, 0, w - 1, h - 1], radius=r,
                              fill=a(self._bg), outline=a(self._bdr), width=1)
 
-        tfnt = _load_font(int(11 * s))
-        nfnt = _load_font(int(10 * s))
-        ifnt = self._mdl2_font(int(12 * s))
+        tfnt = _load_font(int(POPUP_TITLE_SIZE * s))
+        nfnt = _load_font(int(POPUP_TEXT_SIZE * s))
+        ifnt = self._mdl2_font(int(POPUP_ICON_SIZE * s))
 
         px = int(self._PX * s)
         y  = int(self._PY * s)
@@ -409,6 +416,29 @@ class BatteryPopup:
     def _on_leave(self, _e=None):
         self._cv.itemconfig(self._img_id, image=self._photo_n)
         self._cv.config(cursor="")
+
+    def _schedule_close(self):
+        """Request close via a short delay so click-on-popup itself isn't misread."""
+        try:
+            self.win.after(50, self._check_close)
+        except Exception:
+            pass
+
+    def _check_close(self):
+        """Close popup if the pointer is not currently over it."""
+        try:
+            px = self.win.winfo_pointerx()
+            py = self.win.winfo_pointery()
+            x, y = self.win.winfo_x(), self.win.winfo_y()
+            w, h = self.win.winfo_width(), self.win.winfo_height()
+            if not (x <= px < x + w and y <= py < y + h):
+                self._close_request()
+        except Exception:
+            pass
+
+    def _close_request(self):
+        """Called when popup should close; notifies the widget via stored callback."""
+        self._close_cb()
 
     def destroy(self):
         try:
@@ -616,6 +646,7 @@ class BatteryWidget:
             self.root.winfo_x(), self.root.winfo_y(), self.W, self.H,
             self._last_bat, self._last_label,
             quit_cb=self._quit,
+            close_cb=self._close_popup,
         )
         self._watch_popup()
 
