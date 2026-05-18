@@ -24,7 +24,7 @@ UPDATE_INTERVAL = 10      # seconds between background refreshes
 LOW_PCT         = 10      # battery % below which fill turns red
 CORNER_RADIUS   = 8      # corner radius for the battery icon in pixels (0 = square)
 FILL_PADDING      = 0     # gap in pixels between the outline and the fill colour
-FILL_RIGHT_EXTEND = 4     # extra px added to the fill's right edge (corrects visual right gap)
+FILL_RIGHT_EXTEND = 6     # extra px added to the fill's right edge (corrects visual right gap)
 FONT_SIZE           = 22  # label font size in points
 RENDER_SCALE        = 8   # internal supersampling (higher = crisper; 4-8 recommended)
 VISIBILITY_POLL_MS  = 500 # ms between taskbar visibility checks (lower = snappier hide/show)
