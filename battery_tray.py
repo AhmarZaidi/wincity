@@ -102,6 +102,23 @@ def format_time(secs):
     return f"{secs // 3600}:{(secs % 3600) // 60:02d}"
 
 
+def format_time_long(secs):
+    """Return 'x Hours xx Minutes' (or just hours/minutes when one part is zero)."""
+    if secs is None or secs <= 0:
+        return None
+    if secs in (psutil.POWER_TIME_UNKNOWN, psutil.POWER_TIME_UNLIMITED, -1, -2):
+        return None
+    if secs >= 99 * 3600:
+        return None
+    h = int(secs // 3600)
+    m = int((secs % 3600) // 60)
+    if h > 0 and m > 0:
+        return f"{h} Hour{'s' if h != 1 else ''} {m} Minute{'s' if m != 1 else ''}"
+    if h > 0:
+        return f"{h} Hour{'s' if h != 1 else ''}"
+    return f"{m} Minute{'s' if m != 1 else ''}" if m > 0 else None
+
+
 def _rrect(c, x0, y0, x1, y1, r, fill="", outline="", width=1):
     pass  # kept for compatibility; drawing now done via PIL
 
@@ -241,11 +258,12 @@ class BatteryPopup:
         "close":   "\uE8BB",   # Cancel
     }
 
-    def __init__(self, root, wx, wy, ww, wh, bat, label, quit_cb, close_cb):
+    def __init__(self, root, wx, wy, ww, wh, bat, label, secs, quit_cb, close_cb):
         self._quit_cb  = quit_cb
         self._close_cb = close_cb
         self._bat      = bat
         self._label    = label
+        self._secs     = secs
         dark = _is_dark_mode()
 
         if dark:
@@ -390,7 +408,7 @@ class BatteryPopup:
             return [(self._IC["pct"], "Battery", "N/A")]
         pct   = f"{bat.percent:.0f}%"
         t_lbl = "Time to Full" if bat.power_plugged else "Time Left"
-        t_val = label if label else ("Full" if bat.percent >= 100 else "—")
+        t_val = format_time_long(self._secs) or ("Full" if bat.percent >= 100 else "—")
         return [
             (self._IC["pct"],     "Percentage",  pct),
             (self._IC["time"],    t_lbl,         t_val),
@@ -496,6 +514,7 @@ class BatteryWidget:
         self._popup      = None    # BatteryPopup instance when hovered, else None
         self._last_bat   = None    # cached battery data for popup
         self._last_label = None    # cached displayed label for popup
+        self._last_secs  = None    # raw seconds used to compute label (for long format)
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -603,12 +622,16 @@ class BatteryWidget:
 
             # Prefer the OS-supplied time; fall back to our estimated rate
             if bat.secsleft > 0:
+                self._last_secs = bat.secsleft
                 label = format_time(bat.secsleft)
             elif self._charge_rate:
-                label = format_time(int((100 - bat.percent) / self._charge_rate))
+                est = int((100 - bat.percent) / self._charge_rate)
+                self._last_secs = est
+                label = format_time(est)
         else:
             self._charge_obs  = None
             self._charge_rate = None
+            self._last_secs   = bat.secsleft if (bat and not bat.power_plugged) else None
 
         self._last_bat   = bat
         self._last_label = label
@@ -644,7 +667,7 @@ class BatteryWidget:
         self._popup = BatteryPopup(
             self.root,
             self.root.winfo_x(), self.root.winfo_y(), self.W, self.H,
-            self._last_bat, self._last_label,
+            self._last_bat, self._last_label, self._last_secs,
             quit_cb=self._quit,
             close_cb=self._close_popup,
         )
