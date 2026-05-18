@@ -379,6 +379,8 @@ class BatteryPopup:
     _QH = 30   # quit row height
 
     _IC = {
+        "status":  "\uE8A1",   # Info
+        "thunder": "\uE945",   # Lightning
         "pct":     "\uE83F",   # BatteryFull
         "time":    "\uE916",   # Timer
         "rate":    "\uE7EF",   # PlugConnected
@@ -418,10 +420,10 @@ class BatteryPopup:
         s  = _dpi_scale()
         pw = max(int(self._MIN_W * s), self._MIN_W)
         ph = int((self._PY + self._TH + self._SH
-                  + 7 * self._RH + self._SH + self._QH + self._PY) * s)
+                  + 8 * self._RH + self._SH + self._QH + self._PY) * s)
 
         # Pre-compute quit button y bounds for click/hover detection
-        self._quit_y0 = int((self._PY + self._TH + self._SH + 7 * self._RH + self._SH) * s)
+        self._quit_y0 = int((self._PY + self._TH + self._SH + 8 * self._RH + self._SH) * s)
         self._quit_y1 = self._quit_y0 + int(self._QH * s)
 
         self.win = tk.Toplevel(root)
@@ -493,12 +495,25 @@ class BatteryPopup:
         d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
         y += int(self._SH * s)
 
-        # Info rows
-        for icon, name, value in self._rows():
+        # Info rows — tuples are (left_icon, name, value) or (left_icon, name, value, val_icon)
+        for row in self._rows():
+            icon, name, value = row[:3]
+            val_icon = row[3] if len(row) > 3 else None
             my = y + int(self._RH * s) // 2
             d.text((px + int(11 * s), my), icon,  font=ifnt, fill=a(self._icol), anchor="mm")
             d.text((px + int(26 * s), my), name,  font=nfnt, fill=a(self._fg2),  anchor="lm")
-            d.text((w - px,           my), value, font=nfnt, fill=a(self._fg),   anchor="rm")
+            if val_icon:
+                # Measure value text width, place MDL2 icon immediately to its left
+                txt_w  = int(d.textlength(value, font=nfnt))
+                ico_w  = int(POPUP_ICON_SIZE * s)
+                gap    = int(4 * s)
+                blk_x  = w - px - txt_w - gap - ico_w
+                d.text((blk_x + ico_w // 2, my), val_icon, font=ifnt,
+                        fill=a(self._fg), anchor="mm")
+                d.text((blk_x + ico_w + gap, my), value,   font=nfnt,
+                        fill=a(self._fg), anchor="lm")
+            else:
+                d.text((w - px, my), value, font=nfnt, fill=a(self._fg), anchor="rm")
             y += int(self._RH * s)
 
         # Separator
@@ -537,11 +552,16 @@ class BatteryPopup:
     def _rows(self):
         bat, label = self._bat, self._label
         if bat is None:
-            return [(self._IC["pct"], "Battery", "N/A")]
+            return [(self._IC["status"], "Status", "Unknown")]
         pct   = f"{bat.percent:.0f}%"
         t_lbl = "Time to Full" if bat.power_plugged else "Time Left"
         t_val = format_time_long(self._secs) or ("Full" if bat.percent >= 100 else "—")
+        if bat.power_plugged:
+            status_row = (self._IC["status"], "Status", "Charging", self._IC["thunder"])
+        else:
+            status_row = (self._IC["status"], "Status", "Discharging")
         return [
+            status_row,
             (self._IC["pct"],     "Percentage",  pct),
             (self._IC["time"],    t_lbl,         t_val),
             (self._IC["rate"],    "Rate",        _fmt_rate(self._rate_mw)),
