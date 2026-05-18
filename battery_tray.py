@@ -13,8 +13,8 @@ import tkinter as tk
 
 # ── Position / size  (edit these to adjust placement) ────────────────────────
 WIDGET_WIDTH      = 55    # width of the widget in pixels
-WIDGET_HEIGHT     = 25  # None = auto-fit to taskbar height; or set an int (px)
-OFFSET_FROM_RIGHT = 85    # px from the right edge of the taskbar (clears the clock)
+WIDGET_HEIGHT     = 25    # None = auto-fit to taskbar height; or set an int (px)
+OFFSET_FROM_RIGHT = 88    # px from the right edge of the taskbar (clears the clock)
 OFFSET_FROM_TOP   = None  # None = auto-centre vertically; or set an int (px from taskbar top)
 
 # ── Appearance ────────────────────────────────────────────────────────────────
