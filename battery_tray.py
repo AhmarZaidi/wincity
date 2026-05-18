@@ -24,8 +24,9 @@ LOW_PCT         = 10      # battery % below which fill turns red
 CORNER_RADIUS   = 8      # corner radius for the battery icon in pixels (0 = square)
 FILL_PADDING      = 0     # gap in pixels between the outline and the fill colour
 FILL_RIGHT_EXTEND = 4     # extra px added to the fill's right edge (corrects visual right gap)
-FONT_SIZE       = 22      # label font size in points
-RENDER_SCALE    = 8       # internal supersampling (higher = crisper; 4-8 recommended)
+FONT_SIZE           = 22  # label font size in points
+RENDER_SCALE        = 8   # internal supersampling (higher = crisper; 4-8 recommended)
+VISIBILITY_POLL_MS  = 500 # ms between taskbar visibility checks (lower = snappier hide/show)
 
 # ── Windows API ───────────────────────────────────────────────────────────────
 user32 = ctypes.windll.user32
@@ -180,8 +181,39 @@ class BatteryWidget:
     FG     = "#ffffff"
     BORDER = "#3a3a3a"
 
+    @staticmethod
+    def _should_show():
+        """Return True when the widget should be visible.
+        Hidden when: taskbar is auto-hidden off-screen, OR a fullscreen window covers the monitor.
+        """
+        # Check 1: taskbar auto-hidden (rect shrinks to ~2 px when slid off-screen)
+        tb_hwnd = user32.FindWindowW("Shell_TrayWnd", None)
+        if not tb_hwnd or not user32.IsWindowVisible(tb_hwnd):
+            return False
+        tb_rect = ctypes.wintypes.RECT()
+        user32.GetWindowRect(tb_hwnd, ctypes.byref(tb_rect))
+        if min(tb_rect.bottom - tb_rect.top, tb_rect.right - tb_rect.left) <= 6:
+            return False
+
+        # Check 2: foreground window is fullscreen (covers the whole screen)
+        fg = user32.GetForegroundWindow()
+        if fg:
+            cls = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(fg, cls, 256)
+            # Ignore desktop/taskbar windows
+            if cls.value not in ("Shell_TrayWnd", "Progman", "WorkerW", ""):
+                fg_rect = ctypes.wintypes.RECT()
+                user32.GetWindowRect(fg, ctypes.byref(fg_rect))
+                sw = user32.GetSystemMetrics(0)  # physical screen width
+                sh = user32.GetSystemMetrics(1)  # physical screen height
+                if fg_rect.left <= 0 and fg_rect.top <= 0 and fg_rect.right >= sw and fg_rect.bottom >= sh:
+                    return False
+
+        return True
+
     def __init__(self):
-        self._stop = threading.Event()
+        self._stop        = threading.Event()
+        self._widget_shown = True
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -227,6 +259,7 @@ class BatteryWidget:
             pass  # styling is cosmetic — don't crash if it fails
 
         threading.Thread(target=self._bg_updater, daemon=True).start()
+        self.root.after(VISIBILITY_POLL_MS, self._poll_taskbar_visibility)
 
     # ── Positioning ────────────────────────────────────────────────────────
 
@@ -272,6 +305,18 @@ class BatteryWidget:
     def _bg_updater(self):
         while not self._stop.wait(UPDATE_INTERVAL):
             self.root.after(0, self._update_ui)
+
+    # ── Taskbar visibility tracking ────────────────────────────────────────
+
+    def _poll_taskbar_visibility(self):
+        visible = self._should_show()
+        if visible and not self._widget_shown:
+            self.root.deiconify()
+            self._widget_shown = True
+        elif not visible and self._widget_shown:
+            self.root.withdraw()
+            self._widget_shown = False
+        self.root.after(VISIBILITY_POLL_MS, self._poll_taskbar_visibility)
 
     # ── Menu / quit ────────────────────────────────────────────────────────
 
