@@ -10,19 +10,42 @@ import ctypes.wintypes
 import threading
 import psutil
 import tkinter as tk
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTk
 
 # ── Position / size  (edit these to adjust placement) ────────────────────────
 WIDGET_WIDTH      = 55    # width of the widget in pixels
 WIDGET_HEIGHT     = 25    # None = auto-fit to taskbar height; or set an int (px)
-OFFSET_FROM_RIGHT = 88    # px from the right edge of the taskbar (clears the clock)
+OFFSET_FROM_RIGHT = 130    # px from the right edge of the taskbar (clears the clock)
 OFFSET_FROM_TOP   = None  # None = auto-centre vertically; or set an int (px from taskbar top)
 
 # ── Appearance ────────────────────────────────────────────────────────────────
-UPDATE_INTERVAL = 30      # seconds between background refreshes
+UPDATE_INTERVAL = 10      # seconds between background refreshes
 LOW_PCT         = 10      # battery % below which fill turns red
+CORNER_RADIUS   = 10      # corner radius for the battery icon in pixels (0 = square)
+FILL_PADDING    = 0       # gap in pixels between the outline and the fill colour
+FONT_SIZE       = 22      # label font size in points
+RENDER_SCALE    = 8       # internal supersampling (higher = crisper; 4-8 recommended)
 
 # ── Windows API ───────────────────────────────────────────────────────────────
 user32 = ctypes.windll.user32
+
+# Enable per-monitor DPI awareness as early as possible so all coordinates and
+# rendering use physical pixels instead of being scaled by Windows.
+try:
+    user32.SetProcessDpiAwarenessContext(ctypes.c_ssize_t(-4))  # PER_MONITOR_AWARE_V2
+except Exception:
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)           # fallback
+    except Exception:
+        pass
+
+
+def _dpi_scale():
+    """Return physical-to-logical scale factor (e.g. 1.5 at 144 DPI / 150%)."""
+    try:
+        return user32.GetDpiForSystem() / 96.0
+    except Exception:
+        return 1.0
 
 GWL_EXSTYLE      = -20
 WS_EX_TOOLWINDOW = 0x00000080
@@ -67,6 +90,80 @@ def format_time(secs):
     return f"{secs // 3600}:{(secs % 3600) // 60:02d}"
 
 
+def _rrect(c, x0, y0, x1, y1, r, fill="", outline="", width=1):
+    pass  # kept for compatibility; drawing now done via PIL
+
+
+def _load_font(size):
+    """Load best available font at given point size."""
+    for name in ("segoeuisb.ttf", "segoeuib.ttf", "segoeui.ttf", "arialbd.ttf", "arial.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
+def _render_battery(W, H, bat):
+    """Render the battery icon at W×H using RENDER_SCALE× supersampling."""
+    S   = RENDER_SCALE
+    sw, sh = W * S, H * S
+    img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+    d   = ImageDraw.Draw(img)
+
+    if bat is None:
+        fnt = _load_font(FONT_SIZE * S)
+        d.text((sw // 2, sh // 2), "N/A", font=fnt, fill=(136, 136, 136, 255), anchor="mm")
+        return img.resize((W, H), Image.LANCZOS).filter(
+            ImageFilter.UnsharpMask(radius=0.5, percent=180, threshold=0)
+        )
+    pct     = bat.percent
+    plugged = bat.power_plugged
+    time_s  = format_time(bat.secsleft)
+    label   = time_s if time_s else f"{pct:.0f}%"
+
+    if plugged:
+        fill_col = (50,  150, 240, 255)
+    elif pct <= LOW_PCT:
+        fill_col = (220,  50,  50, 255)
+    else:
+        fill_col = (60,  200,  80, 255)
+
+    nub_w  = 5 * S
+    bx0, by0 = 2 * S, 2 * S
+    bx1, by1 = sw - 2 * S - nub_w, sh - 2 * S
+    body_w = bx1 - bx0
+    body_h = by1 - by0
+    r      = CORNER_RADIUS * S
+
+    # Nub
+    nub_h  = max(4 * S, body_h // 3)
+    nub_y0 = by0 + (body_h - nub_h) // 2
+    d.rounded_rectangle([bx1, nub_y0, bx1 + nub_w, nub_y0 + nub_h],
+                        radius=min(r, nub_w // 2), fill=(170, 170, 170, 255))
+
+    # Body (dark bg + outline)
+    d.rounded_rectangle([bx0, by0, bx1, by1], radius=r,
+                        fill=(26, 26, 26, 255), outline=(136, 136, 136, 255), width=S)
+
+    # Charge fill — inset by outline width + FILL_PADDING on every side
+    pad        = (S + FILL_PADDING * S)   # outline is S px wide; add scaled padding
+    fill_max_w = body_w - 2 * pad
+    fill_w     = max(1, int(fill_max_w * pct / 100))
+    d.rounded_rectangle([bx0 + pad, by0 + pad, bx0 + pad + fill_w, by1 - pad],
+                        radius=max(1, r - pad), fill=fill_col)
+
+    # Label centred in body
+    fnt  = _load_font(FONT_SIZE * S)
+    cx   = bx0 + body_w // 2
+    cy   = by0 + body_h // 2
+    d.text((cx, cy), label, font=fnt, fill=(255, 255, 255, 255), anchor="mm")
+
+    return img.resize((W, H), Image.LANCZOS).filter(
+        ImageFilter.UnsharpMask(radius=0.5, percent=180, threshold=0)
+    )
+
+
 # ── Taskbar widget ────────────────────────────────────────────────────────────
 
 class BatteryWidget:
@@ -89,8 +186,9 @@ class BatteryWidget:
 
         tb     = _get_taskbar_rect()
         tb_h   = tb.bottom - tb.top
-        self.H = WIDGET_HEIGHT if WIDGET_HEIGHT is not None else max(28, tb_h - 8)
-        self.W = WIDGET_WIDTH
+        scale  = _dpi_scale()
+        self.H = int((WIDGET_HEIGHT if WIDGET_HEIGHT is not None else max(28, tb_h - 8)) * scale)
+        self.W = int(WIDGET_WIDTH * scale)
 
         # Use a key colour for transparency so only the battery shape is visible
         TRANSPARENT = "#010101"
@@ -146,58 +244,19 @@ class BatteryWidget:
     # ── Drawing ────────────────────────────────────────────────────────────
 
     def _draw(self, bat):
+        W, H   = self.W, self.H
+        T      = (1, 1, 1)          # transparent key colour as RGB tuple
+
+        batt   = _render_battery(W, H, bat)   # RGBA PIL image
+
+        # Composite RGBA battery over the transparent key colour
+        bg = Image.new("RGB", (W, H), T)
+        bg.paste(batt, mask=batt.split()[3])
+
+        self._photo = ImageTk.PhotoImage(bg)   # keep reference to prevent GC
         c = self.canvas
         c.delete("all")
-        W, H = self.W, self.H
-        TRANSPARENT = "#010101"
-
-        # Fill whole canvas with transparent colour first
-        c.create_rectangle(0, 0, W, H, fill=TRANSPARENT, outline="")
-
-        if bat is None:
-            c.create_text(W // 2, H // 2, text="N/A",
-                          fill="#888888", font=("Segoe UI", 8))
-            return
-
-        pct     = bat.percent
-        plugged = bat.power_plugged
-        time_s  = format_time(bat.secsleft)
-        label   = time_s if time_s else f"{pct:.0f}%"
-        color   = self.BLUE if plugged else (self.RED if pct <= LOW_PCT else self.GREEN)
-
-        # Battery outline
-        nub_w = 4
-        bx0, by0 = 2, 3
-        bx1, by1 = W - 2 - nub_w, H - 3
-        body_w = bx1 - bx0
-        body_h = by1 - by0
-
-        # Nub
-        nub_h  = max(4, body_h // 3)
-        nub_y0 = by0 + (body_h - nub_h) // 2
-        c.create_rectangle(bx1, nub_y0, bx1 + nub_w, nub_y0 + nub_h,
-                           fill="#888888", outline="")
-
-        # Body background
-        c.create_rectangle(bx0, by0, bx1, by1,
-                           outline="#888888", width=1, fill="#1a1a1a")
-
-        # Charge fill
-        fill_w = max(1, int((body_w - 2) * pct / 100))
-        c.create_rectangle(bx0 + 1, by0 + 1, bx0 + 1 + fill_w, by1 - 1,
-                           fill=color, outline="")
-
-        # Text centred inside battery body — pick largest fitting size
-        cx = bx0 + body_w // 2
-        cy = by0 + body_h // 2
-        for size in range(13, 6, -1):
-            f = ("Segoe UI Semibold", size)
-            tmp = c.create_text(-999, -999, text=label, font=f)
-            x0, y0, x1, y1 = c.bbox(tmp)
-            c.delete(tmp)
-            if (x1 - x0) <= body_w - 4:
-                break
-        c.create_text(cx, cy, text=label, fill=self.FG, font=f)
+        c.create_image(0, 0, anchor="nw", image=self._photo)
 
     # ── Refresh ────────────────────────────────────────────────────────────
 
