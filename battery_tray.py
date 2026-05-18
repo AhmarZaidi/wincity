@@ -119,10 +119,12 @@ def format_time_long(secs):
     return f"{m} Minute{'s' if m != 1 else ''}" if m > 0 else None
 
 
-def _get_battery_rate_mw():
-    """Return battery rate in mW via IOCTL_BATTERY_QUERY_STATUS.
-    Positive = charging, negative = discharging. None if unavailable.
+def _query_battery_hw():
+    """Query battery hardware via IOCTL in a single device open.
+    Returns (rate_mw, designed_mwh, full_mwh) — any value may be None.
+    rate_mw: positive=charging, negative=discharging.
     """
+    rate_mw = designed_mwh = full_mwh = None
     try:
         class _GUID(ctypes.Structure):
             _fields_ = [('Data1', ctypes.c_ulong),
@@ -131,7 +133,6 @@ def _get_battery_rate_mw():
                         ('Data4', ctypes.c_ubyte * 8)]
 
         class _SP_IFACE_DATA(ctypes.Structure):
-            # Reserved is ULONG_PTR (pointer-sized), not a pointer-to-ulong
             _fields_ = [('cbSize',             ctypes.wintypes.DWORD),
                         ('InterfaceClassGuid', _GUID),
                         ('Flags',             ctypes.wintypes.DWORD),
@@ -154,38 +155,53 @@ def _get_battery_rate_mw():
                         ('Voltage',    ctypes.c_ulong),
                         ('Rate',       ctypes.c_long)]
 
+        class _BAT_QUERY_INFO(ctypes.Structure):
+            _fields_ = [('BatteryTag',       ctypes.c_ulong),
+                        ('InformationLevel', ctypes.c_ulong),
+                        ('AtRate',           ctypes.c_long)]
+
+        class _BAT_INFO(ctypes.Structure):
+            _fields_ = [('Capabilities',       ctypes.c_ulong),
+                        ('Technology',         ctypes.c_ubyte),
+                        ('Reserved',           ctypes.c_ubyte * 3),
+                        ('Chemistry',          ctypes.c_ubyte * 4),
+                        ('DesignedCapacity',   ctypes.c_ulong),
+                        ('FullChargedCapacity',ctypes.c_ulong),
+                        ('DefaultAlert1',      ctypes.c_ulong),
+                        ('DefaultAlert2',      ctypes.c_ulong),
+                        ('ReservedCapacity',   ctypes.c_ulong),
+                        ('CycleCount',         ctypes.c_ulong)]
+
         sa  = ctypes.windll.setupapi
         k32 = ctypes.windll.kernel32
 
-        # Must set restype to c_void_p so 64-bit handle values aren't truncated to 32 bits
         sa.SetupDiGetClassDevsW.restype  = ctypes.c_void_p
         k32.CreateFileW.restype          = ctypes.c_void_p
 
-        # INVALID_HANDLE_VALUE = all-1 bits for the current pointer width
-        _ptr_w       = ctypes.sizeof(ctypes.c_void_p) * 8
+        _ptr_w         = ctypes.sizeof(ctypes.c_void_p) * 8
         INVALID_HANDLE = (1 << _ptr_w) - 1
 
         guid = _GUID(0x72631E54, 0x78A4, 0x11D0,
                      (ctypes.c_ubyte * 8)(0xBC, 0xF7, 0x00, 0xAA, 0x00, 0xB7, 0xB3, 0x2A))
 
-        DIGCF_PRESENT           = 0x02
-        DIGCF_DEVICEINTERFACE   = 0x10
-        GENERIC_READ            = 0x80000000
-        GENERIC_WRITE           = 0x40000000
-        FILE_SHARE_READ         = 0x01
-        FILE_SHARE_WRITE        = 0x02
-        OPEN_EXISTING           = 3
-        IOCTL_BATTERY_QUERY_TAG    = 0x294040
-        IOCTL_BATTERY_QUERY_STATUS = 0x29404C
-        BATTERY_UNKNOWN_RATE       = -2147483648  # 0x80000000 as c_long
+        DIGCF_PRESENT                   = 0x02
+        DIGCF_DEVICEINTERFACE           = 0x10
+        GENERIC_READ                    = 0x80000000
+        GENERIC_WRITE                   = 0x40000000
+        FILE_SHARE_READ                 = 0x01
+        FILE_SHARE_WRITE                = 0x02
+        OPEN_EXISTING                   = 3
+        IOCTL_BATTERY_QUERY_TAG         = 0x294040
+        IOCTL_BATTERY_QUERY_STATUS      = 0x29404C
+        IOCTL_BATTERY_QUERY_INFORMATION = 0x294044
+        BATTERY_UNKNOWN_RATE            = -2147483648
 
         hdev = sa.SetupDiGetClassDevsW(
             ctypes.byref(guid), None, None,
             DIGCF_PRESENT | DIGCF_DEVICEINTERFACE)
         if hdev is None or hdev == INVALID_HANDLE:
-            return None
+            return rate_mw, designed_mwh, full_mwh
 
-        # Wrap in c_void_p so subsequent calls receive the full 64-bit value
         hdev_p = ctypes.c_void_p(hdev)
         try:
             idx = 0
@@ -225,6 +241,7 @@ def _get_battery_rate_mw():
                     if tag.value == 0:
                         continue
 
+                    # Rate
                     wait = _BAT_WAIT(BatteryTag=tag.value, Timeout=0,
                                      PowerState=0, LowCapacity=0,
                                      HighCapacity=0xFFFFFFFF)
@@ -235,14 +252,29 @@ def _get_battery_rate_mw():
                             ctypes.byref(status), ctypes.sizeof(status),
                             ctypes.byref(br), None):
                         if status.Rate != BATTERY_UNKNOWN_RATE:
-                            return status.Rate  # mW, positive=charging
+                            rate_mw = status.Rate
+
+                    # Capacity (for health)
+                    qinfo = _BAT_QUERY_INFO(BatteryTag=tag.value,
+                                            InformationLevel=0,  # BatteryInformation
+                                            AtRate=0)
+                    binfo = _BAT_INFO()
+                    if k32.DeviceIoControl(
+                            hbat_p, IOCTL_BATTERY_QUERY_INFORMATION,
+                            ctypes.byref(qinfo), ctypes.sizeof(qinfo),
+                            ctypes.byref(binfo), ctypes.sizeof(binfo),
+                            ctypes.byref(br), None):
+                        if binfo.DesignedCapacity > 0:
+                            designed_mwh = int(binfo.DesignedCapacity)
+                            full_mwh     = int(binfo.FullChargedCapacity)
+                    break  # first battery device is sufficient
                 finally:
                     k32.CloseHandle(hbat_p)
         finally:
             sa.SetupDiDestroyDeviceInfoList(hdev_p)
     except Exception:
         pass
-    return None
+    return rate_mw, designed_mwh, full_mwh
 
 
 def _fmt_rate(mw):
@@ -252,6 +284,16 @@ def _fmt_rate(mw):
     w = abs(mw) / 1000.0
     sign = "+" if mw > 0 else ""
     return f"{sign}{w:.1f} W"
+
+
+def _fmt_health(designed_mwh, full_mwh):
+    """Format battery health as 'xx.x% (xxWh/xxWh)'."""
+    if designed_mwh is None or full_mwh is None or designed_mwh <= 0:
+        return "—"
+    pct    = full_mwh / designed_mwh * 100
+    des_wh = designed_mwh / 1000
+    ful_wh = full_mwh     / 1000
+    return f"{pct:.1f}% ({ful_wh:.0f}Wh/{des_wh:.0f}Wh)"
 
 
 def _load_font(size):
@@ -391,13 +433,16 @@ class BatteryPopup:
         "close":   "\uE8BB",   # Cancel
     }
 
-    def __init__(self, root, wx, wy, ww, wh, bat, label, secs, rate_mw, quit_cb, close_cb):
-        self._quit_cb  = quit_cb
-        self._close_cb = close_cb
-        self._bat      = bat
-        self._label    = label
-        self._secs     = secs
-        self._rate_mw  = rate_mw
+    def __init__(self, root, wx, wy, ww, wh, bat, label, secs,
+                 rate_mw, designed_mwh, full_mwh, quit_cb, close_cb):
+        self._quit_cb     = quit_cb
+        self._close_cb    = close_cb
+        self._bat         = bat
+        self._label       = label
+        self._secs        = secs
+        self._rate_mw     = rate_mw
+        self._designed_mwh = designed_mwh
+        self._full_mwh     = full_mwh
         dark = _is_dark_mode()
 
         if dark:
@@ -568,7 +613,7 @@ class BatteryPopup:
             (self._IC["elapsed"], "Elapsed",     "—"),
             (self._IC["screen"],  "Screen On",   "—"),
             (self._IC["power"],   "Power Mode",  _get_power_mode()),
-            (self._IC["health"],  "Health",      "—"),
+            (self._IC["health"],  "Health",      _fmt_health(self._designed_mwh, self._full_mwh)),
         ]
 
     # ── Interaction ───────────────────────────────────────────────────────
@@ -667,7 +712,9 @@ class BatteryWidget:
         self._last_bat   = None    # cached battery data for popup
         self._last_label = None    # cached displayed label for popup
         self._last_secs  = None    # raw seconds used to compute label (for long format)
-        self._last_rate_mw = None  # cached battery rate in mW for popup
+        self._last_rate_mw     = None  # cached battery rate in mW for popup
+        self._last_designed_mwh = None  # battery designed capacity in mWh
+        self._last_full_mwh     = None  # battery full-charge capacity in mWh
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -788,7 +835,10 @@ class BatteryWidget:
 
         self._last_bat   = bat
         self._last_label = label
-        self._last_rate_mw = _get_battery_rate_mw()
+        rate_mw, designed_mwh, full_mwh = _query_battery_hw()
+        self._last_rate_mw      = rate_mw
+        self._last_designed_mwh = designed_mwh
+        self._last_full_mwh     = full_mwh
         self._draw(bat, label)
 
     def _toggle_display(self, _event=None):
@@ -821,7 +871,8 @@ class BatteryWidget:
         self._popup = BatteryPopup(
             self.root,
             self.root.winfo_x(), self.root.winfo_y(), self.W, self.H,
-            self._last_bat, self._last_label, self._last_secs, self._last_rate_mw,
+            self._last_bat, self._last_label, self._last_secs,
+            self._last_rate_mw, self._last_designed_mwh, self._last_full_mwh,
             quit_cb=self._quit,
             close_cb=self._close_popup,
         )
