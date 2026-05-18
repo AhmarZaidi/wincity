@@ -598,7 +598,11 @@ class BatteryPopup:
         bat, label = self._bat, self._label
         if bat is None:
             return [(self._IC["status"], "Status", "Unknown")]
-        pct   = f"{bat.percent:.0f}%"
+        if self._full_mwh:
+            remaining_wh = self._full_mwh * bat.percent / 100 / 1000
+            pct = f"{bat.percent:.0f}% ({remaining_wh:.1f} Wh)"
+        else:
+            pct = f"{bat.percent:.0f}%"
         t_lbl = "Time to Full" if bat.power_plugged else "Time Left"
         t_val = format_time_long(self._secs) or ("Full" if bat.percent >= 100 else "—")
         if bat.power_plugged:
