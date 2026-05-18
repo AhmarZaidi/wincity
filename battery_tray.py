@@ -85,10 +85,12 @@ def get_battery():
 
 
 def format_time(secs):
-    """Return 'H:MM' or None if time is unknown/unlimited."""
+    """Return 'H:MM' or None if time is unknown, unlimited, or implausibly large (≥99 h)."""
     if secs is None or secs <= 0:
         return None
     if secs in (psutil.POWER_TIME_UNKNOWN, psutil.POWER_TIME_UNLIMITED, -1, -2):
+        return None
+    if secs >= 99 * 3600:   # implausible estimate — fall back to percentage
         return None
     return f"{secs // 3600}:{(secs % 3600) // 60:02d}"
 
