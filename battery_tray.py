@@ -21,8 +21,9 @@ OFFSET_FROM_TOP   = None  # None = auto-centre vertically; or set an int (px fro
 # ── Appearance ────────────────────────────────────────────────────────────────
 UPDATE_INTERVAL = 10      # seconds between background refreshes
 LOW_PCT         = 10      # battery % below which fill turns red
-CORNER_RADIUS   = 10      # corner radius for the battery icon in pixels (0 = square)
-FILL_PADDING    = 0       # gap in pixels between the outline and the fill colour
+CORNER_RADIUS   = 8      # corner radius for the battery icon in pixels (0 = square)
+FILL_PADDING      = 0     # gap in pixels between the outline and the fill colour
+FILL_RIGHT_EXTEND = 4     # extra px added to the fill's right edge (corrects visual right gap)
 FONT_SIZE       = 22      # label font size in points
 RENDER_SCALE    = 8       # internal supersampling (higher = crisper; 4-8 recommended)
 
@@ -142,16 +143,21 @@ def _render_battery(W, H, bat):
     d.rounded_rectangle([bx1, nub_y0, bx1 + nub_w, nub_y0 + nub_h],
                         radius=min(r, nub_w // 2), fill=(170, 170, 170, 255))
 
-    # Body (dark bg + outline)
-    d.rounded_rectangle([bx0, by0, bx1, by1], radius=r,
-                        fill=(26, 26, 26, 255), outline=(136, 136, 136, 255), width=S)
+    # Body background (outline drawn last so it always sits on top of the fill)
+    d.rounded_rectangle([bx0, by0, bx1, by1], radius=r, fill=(26, 26, 26, 255))
 
-    # Charge fill — inset by outline width + FILL_PADDING on every side
-    pad        = (S + FILL_PADDING * S)   # outline is S px wide; add scaled padding
-    fill_max_w = body_w - 2 * pad
+    # Charge fill — FILL_PADDING logical-px gap on every side; 0 = touches the outline
+    pad        = FILL_PADDING * S
+    rext       = FILL_RIGHT_EXTEND * S
+    fill_max_w = max(1, body_w - 2 * pad)
     fill_w     = max(1, int(fill_max_w * pct / 100))
-    d.rounded_rectangle([bx0 + pad, by0 + pad, bx0 + pad + fill_w, by1 - pad],
-                        radius=max(1, r - pad), fill=fill_col)
+    fill_x1    = min(bx0 + pad + fill_w + rext, bx1 - pad)
+    d.rounded_rectangle([bx0 + pad, by0 + pad, fill_x1, by1 - pad],
+                        radius=max(1, r - pad) if pad > 0 else r, fill=fill_col)
+
+    # Outline on top — always fully visible regardless of fill level
+    d.rounded_rectangle([bx0, by0, bx1, by1], radius=r,
+                        outline=(136, 136, 136, 255), width=S)
 
     # Label centred in body
     fnt  = _load_font(FONT_SIZE * S)
