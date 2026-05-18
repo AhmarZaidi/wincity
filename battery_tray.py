@@ -177,6 +177,182 @@ def _render_battery(W, H, bat, label=None):
     )
 
 
+# ── Popup helpers ─────────────────────────────────────────────────────────────
+
+def _is_dark_mode():
+    """Return True when Windows apps use dark theme."""
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        val, _ = winreg.QueryValueEx(k, "AppsUseLightTheme")
+        winreg.CloseKey(k)
+        return val == 0
+    except Exception:
+        return True
+
+
+def _get_power_mode():
+    """Return a human-readable string for the active Windows power overlay."""
+    try:
+        import uuid as _uuid
+        scheme = (ctypes.c_byte * 16)()
+        if ctypes.windll.powrprof.PowerGetEffectiveOverlayScheme(ctypes.byref(scheme)) == 0:
+            g = _uuid.UUID(bytes_le=bytes(scheme))
+            if g == _uuid.UUID("{961cc777-2547-4f9d-8174-7d86181b8a7a}"):
+                return "Battery Saver"
+            if g == _uuid.UUID("{ded574b5-45a0-4f42-8734-20b1de8d37b3}"):
+                return "Best Performance"
+    except Exception:
+        pass
+    return "Balanced"
+
+
+class BatteryPopup:
+    """Windows 11-style hover info popup for BatteryBar."""
+
+    _ICON_FONT  = ("Segoe MDL2 Assets", 12)
+    _TEXT_FONT  = ("Segoe UI", 10)
+    _BOLD_FONT  = ("Segoe UI", 10, "bold")
+    _TITLE_FONT = ("Segoe UI", 11, "bold")
+    _MIN_W      = 248
+
+    # Segoe MDL2 Assets glyph codes
+    _IC = {
+        "pct":     "\uE83F",   # BatteryFull
+        "time":    "\uE916",   # Timer
+        "rate":    "\uE7EF",   # PlugConnected
+        "elapsed": "\uE81C",   # History
+        "screen":  "\uE7F4",   # TVMonitor
+        "power":   "\uE7E8",   # PowerButton
+        "health":  "\uEB52",   # HeartFill
+        "close":   "\uE8BB",   # Cancel
+    }
+
+    def __init__(self, root, wx, wy, ww, wh, bat, label, quit_cb):
+        self._quit_cb = quit_cb
+        dark = _is_dark_mode()
+
+        if dark:
+            self._bg   = "#1c1c1c"
+            self._fg   = "#ffffff"
+            self._fg2  = "#9d9d9d"
+            self._bdr  = "#3c3c3c"
+            self._icol = "#c8c8c8"
+            self._hov  = "#2d2d2d"
+        else:
+            self._bg   = "#f9f9f9"
+            self._fg   = "#1a1a1a"
+            self._fg2  = "#5c5c5c"
+            self._bdr  = "#dedede"
+            self._icol = "#555555"
+            self._hov  = "#ebebeb"
+
+        self.win = tk.Toplevel(root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.configure(bg=self._bdr)
+        self.win.resizable(False, False)
+
+        self._build(bat, label)
+
+        self.win.update_idletasks()
+        pw = max(self._MIN_W, self.win.winfo_reqwidth() + 2)
+        ph = self.win.winfo_reqheight() + 2
+
+        # Centre above the taskbar widget
+        px = wx + ww // 2 - pw // 2
+        py = wy - ph - 6
+        sw = root.winfo_screenwidth()
+        px = max(4, min(px, sw - pw - 4))
+        py = max(4, py)
+
+        self.win.geometry(f"{pw}x{ph}+{px}+{py}")
+        self.win.update()
+
+        # Windows 11 rounded corners via DWM
+        try:
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                self.win.winfo_id(), 33,
+                ctypes.byref(ctypes.c_int(2)), ctypes.sizeof(ctypes.c_int))
+        except Exception:
+            pass
+
+        # Hide from Alt-Tab
+        try:
+            hwnd  = self.win.winfo_id()
+            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
+        except Exception:
+            pass
+
+    # ── Layout ────────────────────────────────────────────────────────────
+
+    def _build(self, bat, label):
+        body = tk.Frame(self.win, bg=self._bg, padx=14, pady=10)
+        body.pack(fill="both", expand=True, padx=1, pady=1)
+
+        tk.Label(body, text="BatteryBar", font=self._TITLE_FONT,
+                 bg=self._bg, fg=self._fg, anchor="w").pack(fill="x", pady=(0, 4))
+        self._sep(body)
+
+        for icon, name, value in self._rows(bat, label):
+            self._row(body, icon, name, value)
+
+        self._sep(body)
+        self._quit_row(body)
+
+    def _sep(self, parent):
+        tk.Frame(parent, height=1, bg=self._bdr).pack(fill="x", pady=(4, 0))
+
+    def _row(self, parent, icon, name, value):
+        f = tk.Frame(parent, bg=self._bg)
+        f.pack(fill="x", pady=2)
+        tk.Label(f, text=icon, font=self._ICON_FONT,
+                 bg=self._bg, fg=self._icol, width=2, anchor="w").pack(side="left")
+        tk.Label(f, text=name, font=self._TEXT_FONT,
+                 bg=self._bg, fg=self._fg2, anchor="w").pack(side="left", padx=(4, 8))
+        tk.Label(f, text=value, font=self._BOLD_FONT,
+                 bg=self._bg, fg=self._fg, anchor="e").pack(side="right")
+
+    def _quit_row(self, parent):
+        f  = tk.Frame(parent, bg=self._bg, cursor="hand2")
+        f.pack(fill="x", pady=(6, 2))
+        ic = tk.Label(f, text=self._IC["close"], font=self._ICON_FONT,
+                      bg=self._bg, fg="#e04040", width=2, anchor="w")
+        ic.pack(side="left")
+        tx = tk.Label(f, text="Quit", font=self._TEXT_FONT,
+                      bg=self._bg, fg="#e04040", anchor="w")
+        tx.pack(side="left", padx=(4, 0))
+        ws = (f, ic, tx)
+        for w in ws:
+            w.bind("<Button-1>", lambda _e: self._quit_cb())
+            w.bind("<Enter>",    lambda _e, _ws=ws: [x.configure(bg=self._hov) for x in _ws])
+            w.bind("<Leave>",    lambda _e, _ws=ws: [x.configure(bg=self._bg)  for x in _ws])
+
+    def _rows(self, bat, label):
+        if bat is None:
+            return [(self._IC["pct"], "Battery", "N/A")]
+        pct   = f"{bat.percent:.0f}%"
+        t_lbl = "Time to Full" if bat.power_plugged else "Time Left"
+        t_val = label if label else ("Full" if bat.percent >= 100 else "—")
+        return [
+            (self._IC["pct"],     "Percentage",  pct),
+            (self._IC["time"],    t_lbl,         t_val),
+            (self._IC["rate"],    "Rate",        "—"),
+            (self._IC["elapsed"], "Elapsed",     "—"),
+            (self._IC["screen"],  "Screen On",   "—"),
+            (self._IC["power"],   "Power Mode",  _get_power_mode()),
+            (self._IC["health"],  "Health",      "—"),
+        ]
+
+    def destroy(self):
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+
 # ── Taskbar widget ────────────────────────────────────────────────────────────
 
 class BatteryWidget:
@@ -223,6 +399,9 @@ class BatteryWidget:
         self._charge_obs   = None   # (timestamp, percent) last charging observation
         self._charge_rate  = None   # estimated charge rate in %/second
         self._show_percent = False  # toggled by left-click: True = always show %
+        self._popup      = None    # BatteryPopup instance when hovered, else None
+        self._last_bat   = None    # cached battery data for popup
+        self._last_label = None    # cached displayed label for popup
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -259,6 +438,7 @@ class BatteryWidget:
         self._menu.add_command(label="Quit", command=self._quit)
         self.canvas.bind("<Button-3>", self._show_menu)
         self.canvas.bind("<Button-1>", self._toggle_display)
+        self.canvas.bind("<Enter>",    self._on_hover_enter)
 
         self._update_ui()
         self.root.update()
@@ -336,6 +516,8 @@ class BatteryWidget:
             self._charge_obs  = None
             self._charge_rate = None
 
+        self._last_bat   = bat
+        self._last_label = label
         self._draw(bat, label)
 
     def _toggle_display(self, _event=None):
@@ -358,12 +540,60 @@ class BatteryWidget:
             self._widget_shown = False
         self.root.after(VISIBILITY_POLL_MS, self._poll_taskbar_visibility)
 
+    # ── Hover popup ──────────────────────────────────────────────────
+
+    def _on_hover_enter(self, _e=None):
+        if self._popup is None:
+            self._open_popup()
+
+    def _open_popup(self):
+        self._popup = BatteryPopup(
+            self.root,
+            self.root.winfo_x(), self.root.winfo_y(), self.W, self.H,
+            self._last_bat, self._last_label,
+            quit_cb=self._quit,
+        )
+        self._watch_popup()
+
+    def _watch_popup(self):
+        """Periodically close the popup once the mouse leaves both widget and popup."""
+        if self._popup is None:
+            return
+        px, py = self.root.winfo_pointerx(), self.root.winfo_pointery()
+
+        # Still over the taskbar widget?
+        wx, wy = self.root.winfo_x(), self.root.winfo_y()
+        if wx <= px < wx + self.W and wy <= py < wy + self.H:
+            self.root.after(150, self._watch_popup)
+            return
+
+        # Still over the popup window?
+        try:
+            popup_win = self._popup.win
+            pox = popup_win.winfo_x()
+            poy = popup_win.winfo_y()
+            pw_ = popup_win.winfo_width()
+            ph_ = popup_win.winfo_height()
+            if pox <= px < pox + pw_ and poy <= py < poy + ph_:
+                self.root.after(150, self._watch_popup)
+                return
+        except Exception:
+            pass
+
+        self._close_popup()
+
+    def _close_popup(self):
+        if self._popup:
+            self._popup.destroy()
+            self._popup = None
+
     # ── Menu / quit ────────────────────────────────────────────────────────
 
     def _show_menu(self, event):
         self._menu.tk_popup(event.x_root, event.y_root)
 
     def _quit(self):
+        self._close_popup()
         self._stop.set()
         self.root.destroy()
 
