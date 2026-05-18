@@ -8,6 +8,7 @@ Right-click to quit.
 import ctypes
 import ctypes.wintypes
 import threading
+import time
 import psutil
 import tkinter as tk
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTk
@@ -106,8 +107,10 @@ def _load_font(size):
     return ImageFont.load_default()
 
 
-def _render_battery(W, H, bat):
-    """Render the battery icon at W×H using RENDER_SCALE× supersampling."""
+def _render_battery(W, H, bat, label=None):
+    """Render the battery icon at W×H using RENDER_SCALE× supersampling.
+    Pass label to override the auto-computed text (e.g. estimated charge time).
+    """
     S   = RENDER_SCALE
     sw, sh = W * S, H * S
     img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
@@ -121,8 +124,9 @@ def _render_battery(W, H, bat):
         )
     pct     = bat.percent
     plugged = bat.power_plugged
-    time_s  = format_time(bat.secsleft)
-    label   = time_s if time_s else f"{pct:.0f}%"
+    if label is None:
+        time_s = format_time(bat.secsleft)
+        label  = time_s if time_s else f"{pct:.0f}%"
 
     if plugged:
         fill_col = (50,  150, 240, 255)
@@ -212,8 +216,10 @@ class BatteryWidget:
         return True
 
     def __init__(self):
-        self._stop        = threading.Event()
+        self._stop         = threading.Event()
         self._widget_shown = True
+        self._charge_obs   = None   # (timestamp, percent) last charging observation
+        self._charge_rate  = None   # estimated charge rate in %/second
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -282,11 +288,11 @@ class BatteryWidget:
 
     # ── Drawing ────────────────────────────────────────────────────────────
 
-    def _draw(self, bat):
+    def _draw(self, bat, label=None):
         W, H   = self.W, self.H
         T      = (1, 1, 1)          # transparent key colour as RGB tuple
 
-        batt   = _render_battery(W, H, bat)   # RGBA PIL image
+        batt   = _render_battery(W, H, bat, label)   # RGBA PIL image
 
         # Composite RGBA battery over the transparent key colour
         bg = Image.new("RGB", (W, H), T)
@@ -300,7 +306,29 @@ class BatteryWidget:
     # ── Refresh ────────────────────────────────────────────────────────────
 
     def _update_ui(self):
-        self._draw(get_battery())
+        bat   = get_battery()
+        label = None
+
+        if bat and bat.power_plugged and bat.percent < 100:
+            now = time.monotonic()
+            if self._charge_obs is not None:
+                prev_t, prev_pct = self._charge_obs
+                dt   = now - prev_t
+                dpct = bat.percent - prev_pct
+                if dt > 0 and dpct > 0:
+                    self._charge_rate = dpct / dt  # percentage points per second
+            self._charge_obs = (now, bat.percent)
+
+            # Prefer the OS-supplied time; fall back to our estimated rate
+            if bat.secsleft > 0:
+                label = format_time(bat.secsleft)
+            elif self._charge_rate:
+                label = format_time(int((100 - bat.percent) / self._charge_rate))
+        else:
+            self._charge_obs  = None
+            self._charge_rate = None
+
+        self._draw(bat, label)
 
     def _bg_updater(self):
         while not self._stop.wait(UPDATE_INTERVAL):
