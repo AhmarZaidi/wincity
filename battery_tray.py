@@ -119,8 +119,139 @@ def format_time_long(secs):
     return f"{m} Minute{'s' if m != 1 else ''}" if m > 0 else None
 
 
-def _rrect(c, x0, y0, x1, y1, r, fill="", outline="", width=1):
-    pass  # kept for compatibility; drawing now done via PIL
+def _get_battery_rate_mw():
+    """Return battery rate in mW via IOCTL_BATTERY_QUERY_STATUS.
+    Positive = charging, negative = discharging. None if unavailable.
+    """
+    try:
+        class _GUID(ctypes.Structure):
+            _fields_ = [('Data1', ctypes.c_ulong),
+                        ('Data2', ctypes.c_ushort),
+                        ('Data3', ctypes.c_ushort),
+                        ('Data4', ctypes.c_ubyte * 8)]
+
+        class _SP_IFACE_DATA(ctypes.Structure):
+            # Reserved is ULONG_PTR (pointer-sized), not a pointer-to-ulong
+            _fields_ = [('cbSize',             ctypes.wintypes.DWORD),
+                        ('InterfaceClassGuid', _GUID),
+                        ('Flags',             ctypes.wintypes.DWORD),
+                        ('Reserved',          ctypes.c_size_t)]
+
+        class _SP_IFACE_DETAIL(ctypes.Structure):
+            _fields_ = [('cbSize',     ctypes.wintypes.DWORD),
+                        ('DevicePath', ctypes.c_wchar * 512)]
+
+        class _BAT_WAIT(ctypes.Structure):
+            _fields_ = [('BatteryTag',   ctypes.c_ulong),
+                        ('Timeout',      ctypes.c_ulong),
+                        ('PowerState',   ctypes.c_ulong),
+                        ('LowCapacity',  ctypes.c_ulong),
+                        ('HighCapacity', ctypes.c_ulong)]
+
+        class _BAT_STATUS(ctypes.Structure):
+            _fields_ = [('PowerState', ctypes.c_ulong),
+                        ('Capacity',   ctypes.c_ulong),
+                        ('Voltage',    ctypes.c_ulong),
+                        ('Rate',       ctypes.c_long)]
+
+        sa  = ctypes.windll.setupapi
+        k32 = ctypes.windll.kernel32
+
+        # Must set restype to c_void_p so 64-bit handle values aren't truncated to 32 bits
+        sa.SetupDiGetClassDevsW.restype  = ctypes.c_void_p
+        k32.CreateFileW.restype          = ctypes.c_void_p
+
+        # INVALID_HANDLE_VALUE = all-1 bits for the current pointer width
+        _ptr_w       = ctypes.sizeof(ctypes.c_void_p) * 8
+        INVALID_HANDLE = (1 << _ptr_w) - 1
+
+        guid = _GUID(0x72631E54, 0x78A4, 0x11D0,
+                     (ctypes.c_ubyte * 8)(0xBC, 0xF7, 0x00, 0xAA, 0x00, 0xB7, 0xB3, 0x2A))
+
+        DIGCF_PRESENT           = 0x02
+        DIGCF_DEVICEINTERFACE   = 0x10
+        GENERIC_READ            = 0x80000000
+        GENERIC_WRITE           = 0x40000000
+        FILE_SHARE_READ         = 0x01
+        FILE_SHARE_WRITE        = 0x02
+        OPEN_EXISTING           = 3
+        IOCTL_BATTERY_QUERY_TAG    = 0x294040
+        IOCTL_BATTERY_QUERY_STATUS = 0x29404C
+        BATTERY_UNKNOWN_RATE       = -2147483648  # 0x80000000 as c_long
+
+        hdev = sa.SetupDiGetClassDevsW(
+            ctypes.byref(guid), None, None,
+            DIGCF_PRESENT | DIGCF_DEVICEINTERFACE)
+        if hdev is None or hdev == INVALID_HANDLE:
+            return None
+
+        # Wrap in c_void_p so subsequent calls receive the full 64-bit value
+        hdev_p = ctypes.c_void_p(hdev)
+        try:
+            idx = 0
+            while True:
+                iface = _SP_IFACE_DATA()
+                iface.cbSize = ctypes.sizeof(iface)
+                if not sa.SetupDiEnumDeviceInterfaces(
+                        hdev_p, None, ctypes.byref(guid), idx, ctypes.byref(iface)):
+                    break
+                idx += 1
+
+                detail = _SP_IFACE_DETAIL()
+                detail.cbSize = 8 if ctypes.sizeof(ctypes.c_void_p) == 8 else 6
+                req = ctypes.wintypes.DWORD()
+                sa.SetupDiGetDeviceInterfaceDetailW(
+                    hdev_p, ctypes.byref(iface), ctypes.byref(detail),
+                    ctypes.sizeof(detail), ctypes.byref(req), None)
+
+                hbat = k32.CreateFileW(
+                    detail.DevicePath,
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None, OPEN_EXISTING, 0, None)
+                if hbat is None or hbat == INVALID_HANDLE:
+                    continue
+                hbat_p = ctypes.c_void_p(hbat)
+                try:
+                    tag        = ctypes.c_ulong(0)
+                    timeout_in = ctypes.c_ulong(0)
+                    br         = ctypes.wintypes.DWORD()
+                    if not k32.DeviceIoControl(
+                            hbat_p, IOCTL_BATTERY_QUERY_TAG,
+                            ctypes.byref(timeout_in), ctypes.sizeof(timeout_in),
+                            ctypes.byref(tag), ctypes.sizeof(tag),
+                            ctypes.byref(br), None):
+                        continue
+                    if tag.value == 0:
+                        continue
+
+                    wait = _BAT_WAIT(BatteryTag=tag.value, Timeout=0,
+                                     PowerState=0, LowCapacity=0,
+                                     HighCapacity=0xFFFFFFFF)
+                    status = _BAT_STATUS()
+                    if k32.DeviceIoControl(
+                            hbat_p, IOCTL_BATTERY_QUERY_STATUS,
+                            ctypes.byref(wait), ctypes.sizeof(wait),
+                            ctypes.byref(status), ctypes.sizeof(status),
+                            ctypes.byref(br), None):
+                        if status.Rate != BATTERY_UNKNOWN_RATE:
+                            return status.Rate  # mW, positive=charging
+                finally:
+                    k32.CloseHandle(hbat_p)
+        finally:
+            sa.SetupDiDestroyDeviceInfoList(hdev_p)
+    except Exception:
+        pass
+    return None
+
+
+def _fmt_rate(mw):
+    """Format a mW rate value for display: '+3.8 W', '5.2 W', or '—'."""
+    if mw is None:
+        return "—"
+    w = abs(mw) / 1000.0
+    sign = "+" if mw > 0 else ""
+    return f"{sign}{w:.1f} W"
 
 
 def _load_font(size):
@@ -258,12 +389,13 @@ class BatteryPopup:
         "close":   "\uE8BB",   # Cancel
     }
 
-    def __init__(self, root, wx, wy, ww, wh, bat, label, secs, quit_cb, close_cb):
+    def __init__(self, root, wx, wy, ww, wh, bat, label, secs, rate_mw, quit_cb, close_cb):
         self._quit_cb  = quit_cb
         self._close_cb = close_cb
         self._bat      = bat
         self._label    = label
         self._secs     = secs
+        self._rate_mw  = rate_mw
         dark = _is_dark_mode()
 
         if dark:
@@ -412,7 +544,7 @@ class BatteryPopup:
         return [
             (self._IC["pct"],     "Percentage",  pct),
             (self._IC["time"],    t_lbl,         t_val),
-            (self._IC["rate"],    "Rate",        "—"),
+            (self._IC["rate"],    "Rate",        _fmt_rate(self._rate_mw)),
             (self._IC["elapsed"], "Elapsed",     "—"),
             (self._IC["screen"],  "Screen On",   "—"),
             (self._IC["power"],   "Power Mode",  _get_power_mode()),
@@ -515,6 +647,7 @@ class BatteryWidget:
         self._last_bat   = None    # cached battery data for popup
         self._last_label = None    # cached displayed label for popup
         self._last_secs  = None    # raw seconds used to compute label (for long format)
+        self._last_rate_mw = None  # cached battery rate in mW for popup
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -635,6 +768,7 @@ class BatteryWidget:
 
         self._last_bat   = bat
         self._last_label = label
+        self._last_rate_mw = _get_battery_rate_mw()
         self._draw(bat, label)
 
     def _toggle_display(self, _event=None):
@@ -667,7 +801,7 @@ class BatteryWidget:
         self._popup = BatteryPopup(
             self.root,
             self.root.winfo_x(), self.root.winfo_y(), self.W, self.H,
-            self._last_bat, self._last_label, self._last_secs,
+            self._last_bat, self._last_label, self._last_secs, self._last_rate_mw,
             quit_cb=self._quit,
             close_cb=self._close_popup,
         )
