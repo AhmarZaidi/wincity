@@ -222,6 +222,7 @@ class BatteryWidget:
         self._widget_shown = True
         self._charge_obs   = None   # (timestamp, percent) last charging observation
         self._charge_rate  = None   # estimated charge rate in %/second
+        self._show_percent = False  # toggled by left-click: True = always show %
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -257,6 +258,7 @@ class BatteryWidget:
         self._menu.add_separator()
         self._menu.add_command(label="Quit", command=self._quit)
         self.canvas.bind("<Button-3>", self._show_menu)
+        self.canvas.bind("<Button-1>", self._toggle_display)
 
         self._update_ui()
         self.root.update()
@@ -311,7 +313,11 @@ class BatteryWidget:
         bat   = get_battery()
         label = None
 
-        if bat and bat.power_plugged and bat.percent < 100:
+        if self._show_percent:
+            # Percentage-only mode — skip time logic entirely
+            if bat:
+                label = f"{bat.percent:.0f}%"
+        elif bat and bat.power_plugged and bat.percent < 100:
             now = time.monotonic()
             if self._charge_obs is not None:
                 prev_t, prev_pct = self._charge_obs
@@ -331,6 +337,10 @@ class BatteryWidget:
             self._charge_rate = None
 
         self._draw(bat, label)
+
+    def _toggle_display(self, _event=None):
+        self._show_percent = not self._show_percent
+        self._update_ui()
 
     def _bg_updater(self):
         while not self._stop.wait(UPDATE_INTERVAL):
