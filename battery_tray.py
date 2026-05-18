@@ -331,6 +331,8 @@ def _render_battery(W, H, bat, label=None):
         fill_col = (50,  150, 240, 255)
     elif pct <= LOW_PCT:
         fill_col = (220,  50,  50, 255)
+    elif _get_power_mode() == "Battery Saver":
+        fill_col = (240, 190,  40, 255)
     else:
         fill_col = (60,  200,  80, 255)
 
