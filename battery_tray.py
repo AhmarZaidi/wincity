@@ -29,6 +29,10 @@ FONT_SIZE           = 22  # label font size in points
 RENDER_SCALE        = 8   # internal supersampling (higher = crisper; 4-8 recommended)
 VISIBILITY_POLL_MS  = 500 # ms between taskbar visibility checks (lower = snappier hide/show)
 
+# ── Hover popup ────────────────────────────────────────────────────────────
+POPUP_Y_OFFSET  = 20    # px gap between popup bottom and widget top (increase to move up)
+POPUP_CORNER_RADIUS = 12    # corner radius of the hover popup in pixels
+
 # ── Windows API ───────────────────────────────────────────────────────────────
 user32 = ctypes.windll.user32
 
@@ -209,15 +213,20 @@ def _get_power_mode():
 
 
 class BatteryPopup:
-    """Windows 11-style hover info popup for BatteryBar."""
+    """Hover info popup — PIL-rendered; transparent-key gives true rounded corners."""
 
-    _ICON_FONT  = ("Segoe MDL2 Assets", 12)
-    _TEXT_FONT  = ("Segoe UI", 10)
-    _BOLD_FONT  = ("Segoe UI", 10, "bold")
-    _TITLE_FONT = ("Segoe UI", 11, "bold")
-    _MIN_W      = 248
+    _TC     = "#020202"   # transparent key color (distinct from widget's #010101)
+    _TC_RGB = (2, 2, 2)
+    _MIN_W  = 248
 
-    # Segoe MDL2 Assets glyph codes
+    # Layout in logical px (scaled by DPI at render time)
+    _PX = 14   # horizontal padding
+    _PY = 10   # vertical padding
+    _TH = 28   # title row height
+    _SH = 13   # separator block height
+    _RH = 26   # info row height
+    _QH = 30   # quit row height
+
     _IC = {
         "pct":     "\uE83F",   # BatteryFull
         "time":    "\uE916",   # Timer
@@ -231,38 +240,56 @@ class BatteryPopup:
 
     def __init__(self, root, wx, wy, ww, wh, bat, label, quit_cb):
         self._quit_cb = quit_cb
+        self._bat     = bat
+        self._label   = label
         dark = _is_dark_mode()
 
         if dark:
-            self._bg   = "#1c1c1c"
-            self._fg   = "#ffffff"
-            self._fg2  = "#9d9d9d"
-            self._bdr  = "#3c3c3c"
-            self._icol = "#c8c8c8"
-            self._hov  = "#2d2d2d"
+            self._bg   = (28,  28,  28)
+            self._fg   = (255, 255, 255)
+            self._fg2  = (157, 157, 157)
+            self._bdr  = (60,  60,  60)
+            self._icol = (200, 200, 200)
+            self._red  = (224, 64,  64)
+            self._hov  = (45,  45,  45)
         else:
-            self._bg   = "#f9f9f9"
-            self._fg   = "#1a1a1a"
-            self._fg2  = "#5c5c5c"
-            self._bdr  = "#dedede"
-            self._icol = "#555555"
-            self._hov  = "#ebebeb"
+            self._bg   = (249, 249, 249)
+            self._fg   = (26,  26,  26)
+            self._fg2  = (92,  92,  92)
+            self._bdr  = (222, 222, 222)
+            self._icol = (85,  85,  85)
+            self._red  = (196, 43,  28)
+            self._hov  = (235, 235, 235)
+
+        s  = _dpi_scale()
+        pw = max(int(self._MIN_W * s), self._MIN_W)
+        ph = int((self._PY + self._TH + self._SH
+                  + 7 * self._RH + self._SH + self._QH + self._PY) * s)
+
+        # Pre-compute quit button y bounds for click/hover detection
+        self._quit_y0 = int((self._PY + self._TH + self._SH + 7 * self._RH + self._SH) * s)
+        self._quit_y1 = self._quit_y0 + int(self._QH * s)
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        self.win.configure(bg=self._bdr)
+        self.win.attributes("-transparentcolor", self._TC)
+        self.win.configure(bg=self._TC)
         self.win.resizable(False, False)
 
-        self._build(bat, label)
+        self._cv = tk.Canvas(self.win, width=pw, height=ph,
+                              bg=self._TC, highlightthickness=0)
+        self._cv.pack()
 
-        self.win.update_idletasks()
-        pw = max(self._MIN_W, self.win.winfo_reqwidth() + 2)
-        ph = self.win.winfo_reqheight() + 2
+        self._photo_n = ImageTk.PhotoImage(self._render(pw, ph, s, False))
+        self._photo_h = ImageTk.PhotoImage(self._render(pw, ph, s, True))
+        self._img_id  = self._cv.create_image(0, 0, anchor="nw", image=self._photo_n)
+        self._cv.bind("<Button-1>", self._on_click)
+        self._cv.bind("<Motion>",   self._on_motion)
+        self._cv.bind("<Leave>",    self._on_leave)
 
-        # Centre above the taskbar widget
         px = wx + ww // 2 - pw // 2
-        py = wy - ph - 6
+        py = wy - ph - POPUP_Y_OFFSET
         sw = root.winfo_screenwidth()
         px = max(4, min(px, sw - pw - 4))
         py = max(4, py)
@@ -270,15 +297,6 @@ class BatteryPopup:
         self.win.geometry(f"{pw}x{ph}+{px}+{py}")
         self.win.update()
 
-        # Windows 11 rounded corners via DWM
-        try:
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                self.win.winfo_id(), 33,
-                ctypes.byref(ctypes.c_int(2)), ctypes.sizeof(ctypes.c_int))
-        except Exception:
-            pass
-
-        # Hide from Alt-Tab
         try:
             hwnd  = self.win.winfo_id()
             style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
@@ -286,51 +304,81 @@ class BatteryPopup:
         except Exception:
             pass
 
-    # ── Layout ────────────────────────────────────────────────────────────
+    # ── Rendering ─────────────────────────────────────────────────────────
 
-    def _build(self, bat, label):
-        body = tk.Frame(self.win, bg=self._bg, padx=14, pady=10)
-        body.pack(fill="both", expand=True, padx=1, pady=1)
+    def _render(self, w, h, s, quit_hover):
+        r = POPUP_CORNER_RADIUS
 
-        tk.Label(body, text="BatteryBar", font=self._TITLE_FONT,
-                 bg=self._bg, fg=self._fg, anchor="w").pack(fill="x", pady=(0, 4))
-        self._sep(body)
+        def a(rgb): return rgb + (255,)
 
-        for icon, name, value in self._rows(bat, label):
-            self._row(body, icon, name, value)
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d   = ImageDraw.Draw(img)
 
-        self._sep(body)
-        self._quit_row(body)
+        # Rounded rect background + border
+        d.rounded_rectangle([0, 0, w - 1, h - 1], radius=r,
+                             fill=a(self._bg), outline=a(self._bdr), width=1)
 
-    def _sep(self, parent):
-        tk.Frame(parent, height=1, bg=self._bdr).pack(fill="x", pady=(4, 0))
+        tfnt = _load_font(int(11 * s))
+        nfnt = _load_font(int(10 * s))
+        ifnt = self._mdl2_font(int(12 * s))
 
-    def _row(self, parent, icon, name, value):
-        f = tk.Frame(parent, bg=self._bg)
-        f.pack(fill="x", pady=2)
-        tk.Label(f, text=icon, font=self._ICON_FONT,
-                 bg=self._bg, fg=self._icol, width=2, anchor="w").pack(side="left")
-        tk.Label(f, text=name, font=self._TEXT_FONT,
-                 bg=self._bg, fg=self._fg2, anchor="w").pack(side="left", padx=(4, 8))
-        tk.Label(f, text=value, font=self._BOLD_FONT,
-                 bg=self._bg, fg=self._fg, anchor="e").pack(side="right")
+        px = int(self._PX * s)
+        y  = int(self._PY * s)
 
-    def _quit_row(self, parent):
-        f  = tk.Frame(parent, bg=self._bg, cursor="hand2")
-        f.pack(fill="x", pady=(6, 2))
-        ic = tk.Label(f, text=self._IC["close"], font=self._ICON_FONT,
-                      bg=self._bg, fg="#e04040", width=2, anchor="w")
-        ic.pack(side="left")
-        tx = tk.Label(f, text="Quit", font=self._TEXT_FONT,
-                      bg=self._bg, fg="#e04040", anchor="w")
-        tx.pack(side="left", padx=(4, 0))
-        ws = (f, ic, tx)
-        for w in ws:
-            w.bind("<Button-1>", lambda _e: self._quit_cb())
-            w.bind("<Enter>",    lambda _e, _ws=ws: [x.configure(bg=self._hov) for x in _ws])
-            w.bind("<Leave>",    lambda _e, _ws=ws: [x.configure(bg=self._bg)  for x in _ws])
+        # Title
+        d.text((px,     y + int(self._TH * s) // 2), "BatteryBar",
+               font=tfnt, fill=a(self._fg), anchor="lm")
+        d.text((w - px, y + int(self._TH * s) // 2), "v1.0.0",
+               font=nfnt, fill=a(self._fg2), anchor="rm")
+        y += int(self._TH * s)
 
-    def _rows(self, bat, label):
+        # Separator
+        d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
+        y += int(self._SH * s)
+
+        # Info rows
+        for icon, name, value in self._rows():
+            my = y + int(self._RH * s) // 2
+            d.text((px + int(11 * s), my), icon,  font=ifnt, fill=a(self._icol), anchor="mm")
+            d.text((px + int(26 * s), my), name,  font=nfnt, fill=a(self._fg2),  anchor="lm")
+            d.text((w - px,           my), value, font=nfnt, fill=a(self._fg),   anchor="rm")
+            y += int(self._RH * s)
+
+        # Separator
+        d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
+        y += int(self._SH * s)
+
+        # Quit row
+        qy = y + int(self._QH * s) // 2
+        if quit_hover:
+            d.rectangle([px - 4, y + 2, w - px + 4, y + int(self._QH * s) - 2],
+                         fill=a(self._hov))
+        d.text((px + int(11 * s), qy), self._IC["close"],
+               font=ifnt, fill=a(self._red), anchor="mm")
+        d.text((px + int(26 * s), qy), "Quit",
+               font=nfnt, fill=a(self._red), anchor="lm")
+
+        # Composite onto transparent key — corners outside rounded rect become invisible
+        result = Image.new("RGB", (w, h), self._TC_RGB)
+        result.paste(img.convert("RGB"), mask=img.split()[3])
+        return result
+
+    @staticmethod
+    def _mdl2_font(size):
+        import os
+        candidates = [
+            os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "segmdl2.ttf"),
+            "segmdl2.ttf",
+        ]
+        for p in candidates:
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                pass
+        return _load_font(size)
+
+    def _rows(self):
+        bat, label = self._bat, self._label
         if bat is None:
             return [(self._IC["pct"], "Battery", "N/A")]
         pct   = f"{bat.percent:.0f}%"
@@ -345,6 +393,22 @@ class BatteryPopup:
             (self._IC["power"],   "Power Mode",  _get_power_mode()),
             (self._IC["health"],  "Health",      "—"),
         ]
+
+    # ── Interaction ───────────────────────────────────────────────────────
+
+    def _on_click(self, event):
+        if self._quit_y0 <= event.y < self._quit_y1:
+            self._quit_cb()
+
+    def _on_motion(self, event):
+        in_quit = self._quit_y0 <= event.y < self._quit_y1
+        self._cv.itemconfig(self._img_id,
+                             image=self._photo_h if in_quit else self._photo_n)
+        self._cv.config(cursor="hand2" if in_quit else "")
+
+    def _on_leave(self, _e=None):
+        self._cv.itemconfig(self._img_id, image=self._photo_n)
+        self._cv.config(cursor="")
 
     def destroy(self):
         try:
