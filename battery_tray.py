@@ -8,11 +8,18 @@ Right-click to quit.
 import collections
 import ctypes
 import ctypes.wintypes
+import json
+import pathlib
 import threading
 import time
 import psutil
 import tkinter as tk
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTk
+
+# ── Persistent data paths ─────────────────────────────────────────────────────
+_DATA_DIR    = pathlib.Path(__file__).parent / "data"
+_CONFIG_FILE = _DATA_DIR / "config.json"
+_STATE_FILE  = _DATA_DIR / "state.json"
 
 # ── Position / size  (edit these to adjust placement) ────────────────────────
 WIDGET_WIDTH      = 55    # width of the widget in pixels
@@ -40,6 +47,28 @@ POPUP_ICON_SIZE     = 16   # font size (pt) for MDL2 icons in the popup
 
 # ── Windows API ───────────────────────────────────────────────────────────────
 user32 = ctypes.windll.user32
+
+# ── Config defaults (used when config.json is absent / incomplete) ────────────
+_DEFAULT_CONFIG = {
+    "WIDGET_WIDTH":       55,
+    "WIDGET_HEIGHT":      25,
+    "OFFSET_FROM_RIGHT":  130,
+    "OFFSET_FROM_TOP":    None,
+    "UPDATE_INTERVAL":    10,
+    "LOW_PCT":            10,
+    "VISIBILITY_POLL_MS": 500,
+    "CORNER_RADIUS":      8,
+    "FILL_PADDING":       0,
+    "FILL_RIGHT_EXTEND":  0,
+    "FONT_SIZE":          22,
+    "RENDER_SCALE":       8,
+    "OUTLINE_WIDTH":      1,
+    "POPUP_Y_OFFSET":     20,
+    "POPUP_CORNER_RADIUS":12,
+    "POPUP_TITLE_SIZE":   16,
+    "POPUP_TEXT_SIZE":    12,
+    "POPUP_ICON_SIZE":    16,
+}
 
 # Enable per-monitor DPI awareness as early as possible so all coordinates and
 # rendering use physical pixels instead of being scaled by Windows.
@@ -356,6 +385,76 @@ def _fmt_health(designed_mwh, full_mwh):
     des_wh = designed_mwh / 1000
     ful_wh = full_mwh     / 1000
     return f"{pct:.1f}% ({ful_wh:.0f}Wh/{des_wh:.0f}Wh)"
+
+
+# ── Config / state I/O ───────────────────────────────────────────────────────
+
+def _load_config():
+    """Read data/config.json; create with defaults if missing. Updates module globals."""
+    global WIDGET_WIDTH, WIDGET_HEIGHT, OFFSET_FROM_RIGHT, OFFSET_FROM_TOP
+    global UPDATE_INTERVAL, LOW_PCT, VISIBILITY_POLL_MS
+    global CORNER_RADIUS, FILL_PADDING, FILL_RIGHT_EXTEND, FONT_SIZE, RENDER_SCALE, OUTLINE_WIDTH
+    global POPUP_Y_OFFSET, POPUP_CORNER_RADIUS, POPUP_TITLE_SIZE, POPUP_TEXT_SIZE, POPUP_ICON_SIZE
+
+    _DATA_DIR.mkdir(exist_ok=True)
+    if not _CONFIG_FILE.exists():
+        try:
+            _CONFIG_FILE.write_text(
+                json.dumps(_DEFAULT_CONFIG, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return  # module-level defaults already in effect
+
+    try:
+        cfg = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return  # corrupted — keep defaults
+
+    def _gi(key, default):   # get int, fall back to default
+        v = cfg.get(key)
+        return int(v) if v is not None else default
+
+    WIDGET_WIDTH        = _gi("WIDGET_WIDTH",        WIDGET_WIDTH)
+    wh                  = cfg.get("WIDGET_HEIGHT")
+    WIDGET_HEIGHT       = int(wh) if wh is not None else None
+    OFFSET_FROM_RIGHT   = _gi("OFFSET_FROM_RIGHT",   OFFSET_FROM_RIGHT)
+    ot                  = cfg.get("OFFSET_FROM_TOP")
+    OFFSET_FROM_TOP     = int(ot) if ot is not None else None
+    UPDATE_INTERVAL     = _gi("UPDATE_INTERVAL",     UPDATE_INTERVAL)
+    LOW_PCT             = _gi("LOW_PCT",             LOW_PCT)
+    VISIBILITY_POLL_MS  = _gi("VISIBILITY_POLL_MS",  VISIBILITY_POLL_MS)
+    CORNER_RADIUS       = _gi("CORNER_RADIUS",       CORNER_RADIUS)
+    FILL_PADDING        = _gi("FILL_PADDING",        FILL_PADDING)
+    FILL_RIGHT_EXTEND   = _gi("FILL_RIGHT_EXTEND",   FILL_RIGHT_EXTEND)
+    FONT_SIZE           = _gi("FONT_SIZE",           FONT_SIZE)
+    RENDER_SCALE        = _gi("RENDER_SCALE",        RENDER_SCALE)
+    OUTLINE_WIDTH       = _gi("OUTLINE_WIDTH",       OUTLINE_WIDTH)
+    POPUP_Y_OFFSET      = _gi("POPUP_Y_OFFSET",      POPUP_Y_OFFSET)
+    POPUP_CORNER_RADIUS = _gi("POPUP_CORNER_RADIUS", POPUP_CORNER_RADIUS)
+    POPUP_TITLE_SIZE    = _gi("POPUP_TITLE_SIZE",    POPUP_TITLE_SIZE)
+    POPUP_TEXT_SIZE     = _gi("POPUP_TEXT_SIZE",     POPUP_TEXT_SIZE)
+    POPUP_ICON_SIZE     = _gi("POPUP_ICON_SIZE",     POPUP_ICON_SIZE)
+
+
+def _load_state():
+    """Return parsed state dict from data/state.json, or {} on any failure."""
+    try:
+        if _STATE_FILE.exists():
+            return json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_state_file(data):
+    """Write state atomically: tmp file then rename (prevents corruption on kill)."""
+    try:
+        _DATA_DIR.mkdir(exist_ok=True)
+        tmp = _STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(_STATE_FILE)
+    except Exception:
+        pass
 
 
 def _load_font(size):
@@ -1040,6 +1139,31 @@ class BatteryWidget:
         self._discharge_start   = None  # monotonic time when charger last unplugged
         self._prev_plugged      = None  # previous power_plugged state for edge detection
         self._last_elapsed_secs = None  # cached elapsed-on-battery seconds
+        self._save_counter      = 0     # counts _update_ui calls; save every 30 (~5 min)
+
+        # ── Restore persisted state ────────────────────────────────────────
+        state      = _load_state()
+        now_mono   = time.monotonic()
+        now_epoch  = time.time()
+
+        self._show_percent = bool(state.get("show_percent", False))
+
+        # Restore history (wall-clock epoch → monotonic; discard entries > 2 h old)
+        cutoff = now_epoch - 7200
+        for entry in state.get("history", []):
+            if len(entry) == 3:
+                t_ep, pct, pl = entry
+                if t_ep >= cutoff:
+                    self._history.append(
+                        (now_mono - (now_epoch - t_ep), float(pct), bool(pl)))
+
+        # Restore discharge timer (wall-clock epoch → monotonic; gap is included naturally)
+        dse = state.get("discharge_start_epoch")
+        if dse is not None:
+            elapsed_wall = now_epoch - dse
+            if 0 < elapsed_wall < 86400:   # sanity: must be 0-24 h
+                self._discharge_start = now_mono - elapsed_wall
+                self._prev_plugged    = False  # prevent first-poll overwrite
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -1173,9 +1297,11 @@ class BatteryWidget:
             elif self._prev_plugged and not plugged:
                 # Charger just unplugged → start / restart timer
                 self._discharge_start = time.monotonic()
+                self._persist_state()  # save immediately
             elif not self._prev_plugged and plugged:
                 # Charger just plugged in → clear timer
                 self._discharge_start = None
+                self._persist_state()  # save immediately
             self._prev_plugged = plugged
 
         if self._discharge_start is not None and bat is not None and not bat.power_plugged:
@@ -1191,8 +1317,36 @@ class BatteryWidget:
         self._last_temp_c       = temp_c
         self._draw(bat, label)
 
+        # Periodic state save (~every 5 min)
+        self._save_counter += 1
+        if self._save_counter >= 30:
+            self._save_counter = 0
+            self._persist_state()
+
+    def _persist_state(self):
+        """Serialise current runtime state to data/state.json."""
+        now_mono  = time.monotonic()
+        now_epoch = time.time()
+
+        dse = None
+        if self._discharge_start is not None:
+            dse = round(now_epoch - (now_mono - self._discharge_start), 2)
+
+        history_out = [
+            [round(now_epoch - (now_mono - t), 1), round(p, 1), int(pl)]
+            for t, p, pl in self._history
+        ]
+
+        _save_state_file({
+            "schema":                1,
+            "discharge_start_epoch": dse,
+            "show_percent":          self._show_percent,
+            "history":               history_out,
+        })
+
     def _toggle_display(self, _event=None):
         self._show_percent = not self._show_percent
+        self._persist_state()   # save preference immediately
         self._update_ui()
 
     def _bg_updater(self):
@@ -1269,6 +1423,7 @@ class BatteryWidget:
         self._menu.tk_popup(event.x_root, event.y_root)
 
     def _quit(self):
+        self._persist_state()   # flush state before exit
         self._close_popup()
         self._stop.set()
         self.root.destroy()
@@ -1280,6 +1435,7 @@ class BatteryWidget:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    _load_config()   # apply data/config.json (creates it with defaults if absent)
     try:
         BatteryWidget().run()
     except Exception as e:
