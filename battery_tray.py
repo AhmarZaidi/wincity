@@ -511,7 +511,7 @@ class BatteryPopup:
 
     def __init__(self, root, wx, wy, ww, wh, bat, label, secs,
                  rate_mw, designed_mwh, full_mwh, cycle_count, temp_c,
-                 quit_cb, close_cb):
+                 elapsed_secs, quit_cb, close_cb):
         self._quit_cb      = quit_cb
         self._close_cb     = close_cb
         self._bat          = bat
@@ -522,6 +522,7 @@ class BatteryPopup:
         self._full_mwh     = full_mwh
         self._cycle_count  = cycle_count
         self._temp_c       = temp_c
+        self._elapsed_secs = elapsed_secs
         dark = _is_dark_mode()
 
         if dark:
@@ -721,7 +722,7 @@ class BatteryPopup:
             (self._IC["pct"],     "Percentage",  pct),
             (self._IC["time"],    t_lbl,         t_val),
             (self._IC["rate"],    "Rate",        _fmt_rate(self._rate_mw)),
-            (self._IC["elapsed"], "Elapsed",     "—"),
+            (self._IC["elapsed"], "Elapsed",     format_time_long(self._elapsed_secs) or "—"),
             (self._IC["screen"],  "Screen On",   "—"),
             (self._IC["power"],   "Power Mode",  _get_power_mode()),
             (self._IC["cycle"],   "Cycle Count", str(self._cycle_count) if self._cycle_count is not None else "—"),
@@ -851,6 +852,9 @@ class BatteryWidget:
         self._last_full_mwh     = None  # battery full-charge capacity in mWh
         self._last_cycle_count  = None  # battery cycle count
         self._last_temp_c       = None  # battery temperature in °C
+        self._discharge_start   = None  # monotonic time when charger last unplugged
+        self._prev_plugged      = None  # previous power_plugged state for edge detection
+        self._last_elapsed_secs = None  # cached elapsed-on-battery seconds
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -971,6 +975,27 @@ class BatteryWidget:
 
         self._last_bat   = bat
         self._last_label = label
+
+        # ── Elapsed-on-battery tracking ──────────────────────────────────
+        if bat is not None:
+            plugged = bat.power_plugged
+            if self._prev_plugged is None:
+                # First poll — if already on battery, start counting from now
+                if not plugged:
+                    self._discharge_start = time.monotonic()
+            elif self._prev_plugged and not plugged:
+                # Charger just unplugged → start / restart timer
+                self._discharge_start = time.monotonic()
+            elif not self._prev_plugged and plugged:
+                # Charger just plugged in → clear timer
+                self._discharge_start = None
+            self._prev_plugged = plugged
+
+        if self._discharge_start is not None and bat is not None and not bat.power_plugged:
+            self._last_elapsed_secs = int(time.monotonic() - self._discharge_start)
+        else:
+            self._last_elapsed_secs = None
+
         rate_mw, designed_mwh, full_mwh, cycle_count, temp_c = _query_battery_hw()
         self._last_rate_mw      = rate_mw
         self._last_designed_mwh = designed_mwh
@@ -1012,6 +1037,7 @@ class BatteryWidget:
             self._last_bat, self._last_label, self._last_secs,
             self._last_rate_mw, self._last_designed_mwh, self._last_full_mwh,
             self._last_cycle_count, self._last_temp_c,
+            self._last_elapsed_secs,
             quit_cb=self._quit,
             close_cb=self._close_popup,
         )
