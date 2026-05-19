@@ -1,5 +1,9 @@
 # WinCity
 
+<p align="center">
+  <img src="./assets/banner.png" alt="WinCity Banner" width="100%">
+</p>
+
 A minimal taskbar battery monitor.  
 
 | Dark Mode | Light Mode |
@@ -38,7 +42,8 @@ battery_tray/
 ├── data/
 │   ├── config.json    user-editable settings & colors
 │   └── state.json     runtime state (history, elapsed time) - gitignored
-├── build.bat          builds dist\WinCity.exe via PyInstaller
+├── build.ps1          builds dist\WinCity.exe via PyInstaller
+├── build.bat          double-click shortcut → runs build.ps1
 ├── README.md          this file
 └── requirements.txt   Python dependencies
 ```
@@ -82,9 +87,9 @@ Key settings:
 
 **Option A - double-click** `build.bat` in Windows Explorer.
 
-**Option B - from a terminal** (PowerShell or cmd):
-```
-cmd /c build.bat
+**Option B - from PowerShell:**
+```powershell
+.\build.ps1
 ```
 
 Produces `dist\WinCity.exe` - no Python required to run.
