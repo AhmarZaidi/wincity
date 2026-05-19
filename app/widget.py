@@ -114,7 +114,7 @@ class BatteryWidget:
         self._menu = tk.Menu(self.root, tearoff=0, bg="#2d2d2d", fg="#ffffff",
                              activebackground="#3a3a3a", activeforeground="#ffffff",
                              font=("Segoe UI", 9))
-        self._menu.add_command(label="BatteryBar", state="disabled")
+        self._menu.add_command(label="WinCity", state="disabled")
         self._menu.add_separator()
         self._menu.add_command(label="Quit", command=self._quit)
         self.canvas.bind("<Button-3>", self._show_menu)

@@ -155,7 +155,7 @@ class BatteryPopup:
         px = int(self._PX * s)
         y  = int(self._PY * s)
 
-        d.text((px,     y + int(self._TH * s) // 2), "BatteryBar",
+        d.text((px,     y + int(self._TH * s) // 2), "WinCity",
                font=tfnt, fill=a(self._fg), anchor="lm")
         d.text((w - px, y + int(self._TH * s) // 2), "v1.0.0",
                font=nfnt, fill=a(self._fg2), anchor="rm")

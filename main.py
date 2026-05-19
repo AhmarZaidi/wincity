@@ -1,5 +1,5 @@
 """
-BatteryBar entry point.
+WinCity entry point.
 Run with: python main.py
 """
 import sys

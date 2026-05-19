@@ -1,4 +1,4 @@
-# BatteryBar for Windows 11
+# WinCity for Windows 11
 
 A minimal taskbar battery monitor — always visible, no clicking needed.  
 Shows time remaining (discharging) or time to full (charging).  
@@ -35,7 +35,7 @@ battery_tray/
 ├── data/
 │   ├── config.json    user-editable settings & colors
 │   └── state.json     runtime state (history, elapsed time) — gitignored
-├── build.bat          builds dist\BatteryBar.exe via PyInstaller
+├── build.bat          builds dist\WinCity.exe via PyInstaller
 └── requirements.txt
 ```
 
@@ -78,14 +78,14 @@ Key settings:
 build.bat
 ```
 
-Produces `dist\BatteryBar.exe` — no Python required to run.
+Produces `dist\WinCity.exe` — no Python required to run.
 
 ---
 
 ## Auto-start on login
 
 1. Press **Win + R**, type `shell:startup`, press Enter.
-2. Copy `dist\BatteryBar.exe` (or a shortcut) into that folder.
+2. Copy `dist\WinCity.exe` (or a shortcut) into that folder.
 
 ---
 

@@ -1,5 +1,5 @@
 """
-Configuration and state persistence for BatteryBar.
+Configuration and state persistence for WinCity.
 All runtime globals live here so other modules can do `import config; config.X`.
 """
 import json
