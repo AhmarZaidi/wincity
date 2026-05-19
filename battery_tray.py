@@ -125,7 +125,7 @@ def _query_battery_hw():
     Returns (rate_mw, designed_mwh, full_mwh) — any value may be None.
     rate_mw: positive=charging, negative=discharging.
     """
-    rate_mw = designed_mwh = full_mwh = None
+    rate_mw = designed_mwh = full_mwh = cycle_count = temp_c = None
     try:
         class _GUID(ctypes.Structure):
             _fields_ = [('Data1', ctypes.c_ulong),
@@ -201,7 +201,7 @@ def _query_battery_hw():
             ctypes.byref(guid), None, None,
             DIGCF_PRESENT | DIGCF_DEVICEINTERFACE)
         if hdev is None or hdev == INVALID_HANDLE:
-            return rate_mw, designed_mwh, full_mwh
+            return rate_mw, designed_mwh, full_mwh, cycle_count, temp_c
 
         hdev_p = ctypes.c_void_p(hdev)
         try:
@@ -255,7 +255,7 @@ def _query_battery_hw():
                         if status.Rate != BATTERY_UNKNOWN_RATE:
                             rate_mw = status.Rate
 
-                    # Capacity (for health)
+                    # Capacity + cycle count (for health)
                     qinfo = _BAT_QUERY_INFO(BatteryTag=tag.value,
                                             InformationLevel=0,  # BatteryInformation
                                             AtRate=0)
@@ -268,6 +268,25 @@ def _query_battery_hw():
                         if binfo.DesignedCapacity > 0:
                             designed_mwh = int(binfo.DesignedCapacity)
                             full_mwh     = int(binfo.FullChargedCapacity)
+                        # ReservedCapacity field sits at offset 28 = Windows BATTERY_INFORMATION.CycleCount
+                        if binfo.ReservedCapacity > 0:
+                            cycle_count  = int(binfo.ReservedCapacity)
+
+                    # Temperature (BatteryTemperature, level 2) — tenths of Kelvin
+                    qtemp = _BAT_QUERY_INFO(BatteryTag=tag.value,
+                                            InformationLevel=2,
+                                            AtRate=0)
+                    t_raw = ctypes.c_ulong(0)
+                    if k32.DeviceIoControl(
+                            hbat_p, IOCTL_BATTERY_QUERY_INFORMATION,
+                            ctypes.byref(qtemp), ctypes.sizeof(qtemp),
+                            ctypes.byref(t_raw), ctypes.sizeof(t_raw),
+                            ctypes.byref(br), None) and t_raw.value > 0:
+                        v = t_raw.value
+                        # Drivers report in tenths of Kelvin (e.g. 2981) or whole Kelvin (e.g. 298)
+                        t_c = (v / 10.0 - 273.15) if v > 1000 else (v - 273.15)
+                        if -20.0 <= t_c <= 80.0:
+                            temp_c = round(t_c, 1)
                     break  # first battery device is sufficient
                 finally:
                     k32.CloseHandle(hbat_p)
@@ -275,7 +294,42 @@ def _query_battery_hw():
             sa.SetupDiDestroyDeviceInfoList(hdev_p)
     except Exception:
         pass
-    return rate_mw, designed_mwh, full_mwh
+    if temp_c is None:
+        temp_c = _query_temp_wmi()
+    return rate_mw, designed_mwh, full_mwh, cycle_count, temp_c
+
+
+_wmi_temp_cache: dict = {"val": None, "ts": -999.0}
+
+def _query_temp_wmi():
+    """Read ACPI thermal zone temperature via WMI (subprocess, cached 60 s).
+    Falls back to this when the battery driver doesn\'t implement BatteryTemperature IOCTL.
+    """
+    now = time.monotonic()
+    if now - _wmi_temp_cache["ts"] < 60.0:
+        return _wmi_temp_cache["val"]
+    val = None
+    try:
+        import subprocess
+        r = subprocess.run(
+            ['powershell', '-NoProfile', '-NonInteractive', '-Command',
+             '(Get-CimInstance -Namespace root/wmi '
+             '-ClassName MSAcpi_ThermalZoneTemperature '
+             '-ErrorAction SilentlyContinue | '
+             'Select-Object -First 1).CurrentTemperature'],
+            capture_output=True, text=True, timeout=5,
+            creationflags=0x08000000)   # CREATE_NO_WINDOW
+        raw = r.stdout.strip()
+        if raw and raw.lstrip('-').isdigit():
+            v   = int(raw)
+            t_c = round(v / 10.0 - 273.15, 1)   # ACPI always uses tenths of Kelvin
+            if -20.0 <= t_c <= 100.0:
+                val = t_c
+    except Exception:
+        pass
+    _wmi_temp_cache["val"] = val
+    _wmi_temp_cache["ts"]  = now
+    return val
 
 
 def _fmt_rate(mw):
@@ -445,6 +499,8 @@ class BatteryPopup:
         "screen":      "\uE7F4",   # TVMonitor
         "power":       "\uE7E8",   # PowerButton
         "health":      "\uEB52",   # HeartFill
+        "cycle":        "\uE117",   # Sync (cycle)
+        "temp":         "\uE9CA",   # Thermometer
         # Action bar
         "startup_on":  "\uE73E",   # CheckboxFilled (startup enabled)
         "startup_off": "\uE739",   # Checkbox (startup disabled)
@@ -454,15 +510,18 @@ class BatteryPopup:
     }
 
     def __init__(self, root, wx, wy, ww, wh, bat, label, secs,
-                 rate_mw, designed_mwh, full_mwh, quit_cb, close_cb):
-        self._quit_cb     = quit_cb
-        self._close_cb    = close_cb
-        self._bat         = bat
-        self._label       = label
-        self._secs        = secs
-        self._rate_mw     = rate_mw
+                 rate_mw, designed_mwh, full_mwh, cycle_count, temp_c,
+                 quit_cb, close_cb):
+        self._quit_cb      = quit_cb
+        self._close_cb     = close_cb
+        self._bat          = bat
+        self._label        = label
+        self._secs         = secs
+        self._rate_mw      = rate_mw
         self._designed_mwh = designed_mwh
         self._full_mwh     = full_mwh
+        self._cycle_count  = cycle_count
+        self._temp_c       = temp_c
         dark = _is_dark_mode()
 
         if dark:
@@ -485,14 +544,14 @@ class BatteryPopup:
         s  = _dpi_scale()
         pw = max(int(self._MIN_W * s), self._MIN_W)
         ph = int((self._PY + self._TH + self._SH
-                  + 8 * self._RH + self._SH + self._QH + self._PY) * s)
+                  + 10 * self._RH + self._SH + self._QH + self._PY) * s)
 
         self._startup_on        = False  # placeholder toggle state
         self._pw, self._ph, self._s = pw, ph, s
         self._img_cache         = {}     # (hover_key, startup_on) -> PhotoImage
 
         # Action bar y bounds (all buttons share the same row)
-        self._bar_y0 = int((self._PY + self._TH + self._SH + 8 * self._RH + self._SH) * s)
+        self._bar_y0 = int((self._PY + self._TH + self._SH + 10 * self._RH + self._SH) * s)
         self._bar_y1 = self._bar_y0 + int(self._QH * s)
 
         # Button x bounds for hit-testing
@@ -573,7 +632,7 @@ class BatteryPopup:
         d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
         y += int(self._SH * s)
 
-        # Info rows — tuples are (left_icon, name, value) or (left_icon, name, value, val_icon)
+        # Cycle count and temp rows are also 10 rows in the render loop
         for row in self._rows():
             icon, name, value = row[:3]
             val_icon = row[3] if len(row) > 3 else None
@@ -665,6 +724,8 @@ class BatteryPopup:
             (self._IC["elapsed"], "Elapsed",     "—"),
             (self._IC["screen"],  "Screen On",   "—"),
             (self._IC["power"],   "Power Mode",  _get_power_mode()),
+            (self._IC["cycle"],   "Cycle Count", str(self._cycle_count) if self._cycle_count is not None else "—"),
+            (self._IC["temp"],    "Temperature", f"{self._temp_c} °C" if self._temp_c is not None else "—"),
             (self._IC["health"],  "Health",      _fmt_health(self._designed_mwh, self._full_mwh)),
         ]
 
@@ -785,9 +846,11 @@ class BatteryWidget:
         self._last_bat   = None    # cached battery data for popup
         self._last_label = None    # cached displayed label for popup
         self._last_secs  = None    # raw seconds used to compute label (for long format)
-        self._last_rate_mw     = None  # cached battery rate in mW for popup
+        self._last_rate_mw      = None  # cached battery rate in mW for popup
         self._last_designed_mwh = None  # battery designed capacity in mWh
         self._last_full_mwh     = None  # battery full-charge capacity in mWh
+        self._last_cycle_count  = None  # battery cycle count
+        self._last_temp_c       = None  # battery temperature in °C
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -908,10 +971,12 @@ class BatteryWidget:
 
         self._last_bat   = bat
         self._last_label = label
-        rate_mw, designed_mwh, full_mwh = _query_battery_hw()
+        rate_mw, designed_mwh, full_mwh, cycle_count, temp_c = _query_battery_hw()
         self._last_rate_mw      = rate_mw
         self._last_designed_mwh = designed_mwh
         self._last_full_mwh     = full_mwh
+        self._last_cycle_count  = cycle_count
+        self._last_temp_c       = temp_c
         self._draw(bat, label)
 
     def _toggle_display(self, _event=None):
@@ -946,6 +1011,7 @@ class BatteryWidget:
             self.root.winfo_x(), self.root.winfo_y(), self.W, self.H,
             self._last_bat, self._last_label, self._last_secs,
             self._last_rate_mw, self._last_designed_mwh, self._last_full_mwh,
+            self._last_cycle_count, self._last_temp_c,
             quit_cb=self._quit,
             close_cb=self._close_popup,
         )
