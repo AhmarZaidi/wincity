@@ -9,7 +9,7 @@ pip install -r requirements.txt
 pip install pyinstaller
 
 echo [2/4] Building executable (no console window)...
-pyinstaller --onefile --noconsole --name BatteryBar battery_tray.py
+pyinstaller --onefile --noconsole --name BatteryBar main.py
 
 echo [3/4] Done!
 echo.

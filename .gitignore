@@ -1,1 +1,6 @@
 /data/state.json
+/data/state-prev.json
+__pycache__/
+dist/
+build/
+*.spec
