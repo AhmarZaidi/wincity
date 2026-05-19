@@ -5,6 +5,7 @@ Shows a battery icon with time remaining drawn inside it.
 Right-click to quit.
 """
 
+import collections
 import ctypes
 import ctypes.wintypes
 import threading
@@ -332,6 +333,12 @@ def _query_temp_wmi():
     return val
 
 
+def _fmt_hm(dt):
+    """Format a datetime as '1:30 PM' (no leading zero, uppercase AM/PM)."""
+    h = dt.hour % 12 or 12
+    return f"{h}:{dt.minute:02d} {'AM' if dt.hour < 12 else 'PM'}"
+
+
 def _fmt_rate(mw):
     """Format a mW rate value for display: '+3.8 W', '-5.2 W', or '—'."""
     if mw is None:
@@ -488,6 +495,15 @@ class BatteryPopup:
     _SH = 13   # separator block height
     _RH = 26   # info row height
     _QH = 30   # action bar row height
+    _GH = 120   # graph block total height (logical px, includes outer margins)
+
+    # Graph internals (logical px / pt, scaled by DPI at render time)
+    _G_MARGIN  = 7     # side and top padding inside graph container
+    _G_LBL_H   = 15   # bottom strip height reserved for x-axis labels
+    _G_CORNER  = 6    # graph container corner radius
+    _G_FONT    = 10   # label font size (pt)
+    _G_LW      = 1.5  # chart line width multiplier
+    _G_MIN_GAP = 34   # min px between adjacent x-axis labels before hiding
 
     _IC = {
         "status":      "\uE8A1",   # Info
@@ -511,7 +527,7 @@ class BatteryPopup:
 
     def __init__(self, root, wx, wy, ww, wh, bat, label, secs,
                  rate_mw, designed_mwh, full_mwh, cycle_count, temp_c,
-                 elapsed_secs, quit_cb, close_cb):
+                 elapsed_secs, history, quit_cb, close_cb):
         self._quit_cb      = quit_cb
         self._close_cb     = close_cb
         self._bat          = bat
@@ -523,6 +539,7 @@ class BatteryPopup:
         self._cycle_count  = cycle_count
         self._temp_c       = temp_c
         self._elapsed_secs = elapsed_secs
+        self._history      = history  # list of (monotonic_t, percent, plugged)
         dark = _is_dark_mode()
 
         if dark:
@@ -545,14 +562,14 @@ class BatteryPopup:
         s  = _dpi_scale()
         pw = max(int(self._MIN_W * s), self._MIN_W)
         ph = int((self._PY + self._TH + self._SH
-                  + 10 * self._RH + self._SH + self._QH + self._PY) * s)
+                  + 10 * self._RH + self._GH + self._SH + self._QH + self._PY) * s)
 
         self._startup_on        = False  # placeholder toggle state
         self._pw, self._ph, self._s = pw, ph, s
         self._img_cache         = {}     # (hover_key, startup_on) -> PhotoImage
 
         # Action bar y bounds (all buttons share the same row)
-        self._bar_y0 = int((self._PY + self._TH + self._SH + 10 * self._RH + self._SH) * s)
+        self._bar_y0 = int((self._PY + self._TH + self._SH + 10 * self._RH + self._GH + self._SH) * s)
         self._bar_y1 = self._bar_y0 + int(self._QH * s)
 
         # Button x bounds for hit-testing
@@ -633,15 +650,15 @@ class BatteryPopup:
         d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
         y += int(self._SH * s)
 
-        # Cycle count and temp rows are also 10 rows in the render loop
-        for row in self._rows():
+        # ── Info rows (graph injected after Elapsed, index 4) ───────────────
+        GRAPH_AFTER_ROW = 4
+        for i, row in enumerate(self._rows()):
             icon, name, value = row[:3]
             val_icon = row[3] if len(row) > 3 else None
             my = y + int(self._RH * s) // 2
             d.text((px + int(11 * s), my), icon,  font=ifnt, fill=a(self._icol), anchor="mm")
             d.text((px + int(26 * s), my), name,  font=nfnt, fill=a(self._fg2),  anchor="lm")
             if val_icon:
-                # Measure value text width, place MDL2 icon immediately to its left
                 txt_w  = int(d.textlength(value, font=nfnt))
                 ico_w  = int(POPUP_ICON_SIZE * s)
                 gap    = int(4 * s)
@@ -654,7 +671,11 @@ class BatteryPopup:
                 d.text((w - px, my), value, font=nfnt, fill=a(self._fg), anchor="rm")
             y += int(self._RH * s)
 
-        # Separator
+            if i == GRAPH_AFTER_ROW:
+                self._draw_graph(d, img, px, y, w, s, a)
+                y += int(self._GH * s)
+
+        # Separator before action bar
         d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
         y += int(self._SH * s)
 
@@ -687,6 +708,169 @@ class BatteryPopup:
         result = Image.new("RGB", (w, h), self._TC_RGB)
         result.paste(img.convert("RGB"), mask=img.split()[3])
         return result
+
+    def _draw_graph(self, d, img, px, y, w, s, a):
+        """Draw the battery-history area chart: filled past + dotted forecast."""
+        from datetime import datetime, timedelta
+
+        gh    = int(self._GH      * s)
+        mg    = int(self._G_MARGIN * s)
+        h_lbl = int(self._G_LBL_H  * s)
+        cr    = int(self._G_CORNER * s)
+
+        # Container bounds
+        cx0, cy0 = px, y + int(4 * s)
+        cx1, cy1 = w - px, cy0 + gh - int(8 * s)
+
+        # ── Static background based on theme ─────────────────────────────
+        dark     = (self._bg[0] < 128)
+        cont_bg  = (44, 44, 50) if dark else (205, 207, 215)
+        # Border drawn last (after overlay paste) so it sits on top
+
+        bat = self._bat
+        if bat is None:
+            return
+
+        # ── Color scheme ─────────────────────────────────────────────────
+        if bat.power_plugged:
+            fill_col = (  0, 120, 212,  95)
+            line_col = (  0, 140, 230, 235)
+        elif bat.percent <= LOW_PCT or _get_power_mode() == "Battery Saver":
+            fill_col = (240, 190,  40, 100)
+            line_col = (215, 160,  15, 240)
+        else:
+            fill_col = ( 76, 187, 100, 100)
+            line_col = ( 40, 170,  70, 240)
+
+        # ── Time window ───────────────────────────────────────────────────
+        elapsed_s = self._elapsed_secs or 0
+        secs_raw  = self._secs
+        if (secs_raw is None or secs_raw <= 0
+                or secs_raw in (psutil.POWER_TIME_UNKNOWN,
+                                psutil.POWER_TIME_UNLIMITED, -1, -2)):
+            secs_right = 0
+        else:
+            secs_right = int(secs_raw)
+
+        total_s = max(1, elapsed_s + secs_right)
+
+        # ── Plot area ─────────────────────────────────────────────────────
+        ppx0 = cx0 + mg
+        ppx1 = cx1 - mg
+        ppy0 = cy0 + mg
+        ppy1 = cy1 - mg - h_lbl
+        pw_  = max(1, ppx1 - ppx0)
+        ph_  = max(1, ppy1 - ppy0)
+
+        def pct_y(pct):
+            return ppy1 - int(max(0.0, min(100.0, pct)) / 100.0 * ph_)
+
+        def offset_x(sec_from_left):
+            return ppx0 + int(sec_from_left / total_s * pw_)
+
+        now_px = offset_x(elapsed_s)
+        cur_y  = pct_y(bat.percent)
+
+        # ── Historical filled area ────────────────────────────────────────
+        hist = self._history
+        if hist and len(hist) >= 2:
+            now_mono = time.monotonic()
+
+            def mono_x(mono_t):
+                off = elapsed_s - (now_mono - mono_t)
+                return ppx0 + int(max(0.0, min(1.0, off / total_s)) * pw_)
+
+            pts_hist = [(mono_x(t), pct_y(p)) for t, p, _ in hist]
+
+            # Overlay background = cont_bg so transparent pixels keep the bg color
+            overlay   = Image.new("RGBA", img.size, cont_bg + (255,))
+            od        = ImageDraw.Draw(overlay)
+
+            # Polygon: anchor left edge at ppx0 so fill reaches the left wall
+            left_wall = [(ppx0, ppy1)]
+            if pts_hist[0][0] > ppx0:
+                left_wall.append((ppx0, pts_hist[0][1]))   # vertical left edge
+            poly = left_wall + pts_hist + [(now_px, ppy1)]
+            od.polygon(poly, fill=fill_col)
+            lw = max(1, int(self._G_LW * s))
+
+            # Line: also start from left wall if first point is inset
+            line_pts = ([(ppx0, pts_hist[0][1])] if pts_hist[0][0] > ppx0 else []) \
+                       + pts_hist + [(now_px, cur_y)]
+            od.line(line_pts, fill=line_col, width=lw)
+
+            clip_mask = Image.new("L", img.size, 0)
+            ImageDraw.Draw(clip_mask).rounded_rectangle(
+                [cx0 + 1, cy0 + 1, cx1 - 1, cy1 - 1], radius=max(1, cr - 1), fill=255)
+            img.paste(overlay, mask=clip_mask)
+        else:
+            sfnt  = _load_font(int(11 * s))
+            mid_x = (cx0 + cx1) // 2
+            mid_y = cy0 + mg + ph_ // 2
+            d.text((mid_x, mid_y), "Collecting data\u2026",
+                   font=sfnt, fill=a(self._fg2), anchor="mm")
+
+        # ── Future dotted forecast line ───────────────────────────────────
+        if secs_right > 0:
+            end_y = pct_y(100.0 if bat.power_plugged else 0.0)
+            self._dotted_line(d, now_px, cur_y, ppx1, end_y, line_col, s)
+
+        # ── Y-axis (left) and X-axis (bottom) lines ───────────────────────
+        axis_col = a(self._fg2)
+        d.line([(ppx0, ppy0), (ppx0, ppy1)], fill=axis_col, width=1)   # Y-axis
+        d.line([(ppx0, ppy1), (ppx1, ppy1)], fill=axis_col, width=1)   # X-axis
+
+        # ── Container border (drawn last to sit on top of fill) ───────────
+        d.rounded_rectangle([cx0, cy0, cx1, cy1],
+                             radius=cr, outline=a(self._bdr), width=1)
+
+        # ── Labels ────────────────────────────────────────────────────────
+        lfnt    = _load_font(max(self._G_FONT, int(self._G_FONT * s)))
+        lbl_y   = ppy1 + int(3 * s)
+        min_gap = int(self._G_MIN_GAP * s)
+        now_dt  = datetime.now()
+
+        # "100%" — top-left of plot area, full-brightness fg
+        d.text((ppx0 + int(3 * s), ppy0 + int(2 * s)), "100%",
+               font=lfnt, fill=a(self._fg), anchor="lt")
+
+        # left time — always show when elapsed > 0 (anchored at left edge, no overlap risk)
+        if elapsed_s > 0:
+            d.text((ppx0, lbl_y),
+                   _fmt_hm(now_dt - timedelta(seconds=elapsed_s)),
+                   font=lfnt, fill=a(self._fg2), anchor="lt")
+
+        # "Now" — only if there’s room left of it (avoids overlapping left label)
+        if (now_px - ppx0) >= min_gap:
+            d.text((now_px, lbl_y), "Now",
+                   font=lfnt, fill=a(self._fg), anchor="mt")
+
+        # right time — only if enough room from the "Now" line
+        if secs_right > 0 and (ppx1 - now_px) >= min_gap // 2:
+            d.text((ppx1, lbl_y),
+                   _fmt_hm(now_dt + timedelta(seconds=secs_right)),
+                   font=lfnt, fill=a(self._fg2), anchor="rt")
+
+    @staticmethod
+    def _dotted_line(draw, x1, y1, x2, y2, fill, s):
+        """Draw a dashed line from (x1,y1) to (x2,y2) directly onto draw."""
+        import math
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length < 1:
+            return
+        dash = max(3, int(4 * s))
+        gap  = max(2, int(3 * s))
+        ux, uy = dx / length, dy / length
+        pos = 0
+        lw  = max(1, int(1.5 * s))
+        while pos < length:
+            end_pos = min(pos + dash, length)
+            sx, sy  = x1 + ux * pos,     y1 + uy * pos
+            ex, ey  = x1 + ux * end_pos, y1 + uy * end_pos
+            draw.line([(int(sx), int(sy)), (int(ex), int(ey))],
+                      fill=fill, width=lw)
+            pos += dash + gap
 
     @staticmethod
     def _mdl2_font(size):
@@ -852,6 +1036,7 @@ class BatteryWidget:
         self._last_full_mwh     = None  # battery full-charge capacity in mWh
         self._last_cycle_count  = None  # battery cycle count
         self._last_temp_c       = None  # battery temperature in °C
+        self._history           = collections.deque(maxlen=720)  # (t, pct, plugged) history
         self._discharge_start   = None  # monotonic time when charger last unplugged
         self._prev_plugged      = None  # previous power_plugged state for edge detection
         self._last_elapsed_secs = None  # cached elapsed-on-battery seconds
@@ -975,6 +1160,8 @@ class BatteryWidget:
 
         self._last_bat   = bat
         self._last_label = label
+        if bat is not None:
+            self._history.append((time.monotonic(), bat.percent, bat.power_plugged))
 
         # ── Elapsed-on-battery tracking ──────────────────────────────────
         if bat is not None:
@@ -1038,6 +1225,7 @@ class BatteryWidget:
             self._last_rate_mw, self._last_designed_mwh, self._last_full_mwh,
             self._last_cycle_count, self._last_temp_c,
             self._last_elapsed_secs,
+            list(self._history),
             quit_cb=self._quit,
             close_cb=self._close_popup,
         )
