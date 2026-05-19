@@ -23,7 +23,15 @@
       "visible": true
     },
     {
+      "id": "power_mode",
+      "visible": true
+    },
+    {
       "id": "percentage",
+      "visible": true
+    },
+    {
+      "id": "health",
       "visible": true
     },
     {
@@ -44,23 +52,15 @@
     },
     {
       "id": "screen_on",
-      "visible": true
-    },
-    {
-      "id": "power_mode",
-      "visible": true
+      "visible": false
     },
     {
       "id": "cycle_count",
-      "visible": true
+      "visible": false
     },
     {
       "id": "temperature",
-      "visible": true
-    },
-    {
-      "id": "health",
-      "visible": true
+      "visible": false
     }
   ],
   "colors": {

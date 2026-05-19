@@ -72,16 +72,16 @@ _DEFAULT_CONFIG = {
     # The "graph" entry controls where the history chart is injected.
     "rows": [
         {"id": "status",      "visible": True},
+        {"id": "power_mode",  "visible": True},
         {"id": "percentage",  "visible": True},
+        {"id": "health",      "visible": True},
         {"id": "time",        "visible": True},
         {"id": "rate",        "visible": True},
         {"id": "elapsed",     "visible": True},
         {"id": "graph",       "visible": True},
-        {"id": "screen_on",   "visible": True},
-        {"id": "power_mode",  "visible": True},
-        {"id": "cycle_count", "visible": True},
-        {"id": "temperature", "visible": True},
-        {"id": "health",      "visible": True},
+        {"id": "screen_on",   "visible": False},
+        {"id": "cycle_count", "visible": False},
+        {"id": "temperature", "visible": False},
     ],
     # Theme colors — edit as hex strings: '#rrggbb' (RGB) or '#rrggbbaa' (RGBA with alpha).
     "colors": {
@@ -1453,7 +1453,16 @@ class BatteryWidget:
         self._update_ui()
 
     def _bg_updater(self):
+        _cfg_mtime = _CONFIG_FILE.stat().st_mtime if _CONFIG_FILE.exists() else 0
         while not self._stop.wait(UPDATE_INTERVAL):
+            # Live config reload — detect file changes
+            try:
+                mtime = _CONFIG_FILE.stat().st_mtime
+                if mtime != _cfg_mtime:
+                    _load_config()
+                    _cfg_mtime = mtime
+            except Exception:
+                pass
             self.root.after(0, self._update_ui)
 
     # ── Taskbar visibility tracking ────────────────────────────────────────
