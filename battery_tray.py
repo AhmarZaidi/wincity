@@ -306,7 +306,7 @@ def _load_font(size):
     return ImageFont.load_default()
 
 
-def _render_battery(W, H, bat, label=None):
+def _render_battery(W, H, bat, label=None, dark=True):
     """Render the battery icon at W×H using RENDER_SCALE× supersampling.
     Pass label to override the auto-computed text (e.g. estimated charge time).
     """
@@ -343,14 +343,26 @@ def _render_battery(W, H, bat, label=None):
     body_h = by1 - by0
     r      = CORNER_RADIUS * S
 
+    # Theme-dependent colors
+    if dark:
+        body_bg  = (26,  26,  26,  255)
+        nub_col  = (170, 170, 170, 255)
+        outline  = (136, 136, 136, 255)
+        text_col = (255, 255, 255, 255)
+    else:
+        body_bg  = (255, 255, 255, 255)
+        nub_col  = (30,  30,  30,  255)
+        outline  = (30,  30,  30,  255)
+        text_col = (26,  26,  26,  255)
+
     # Nub
     nub_h  = max(4 * S, body_h // 3)
     nub_y0 = by0 + (body_h - nub_h) // 2
     d.rounded_rectangle([bx1, nub_y0, bx1 + nub_w, nub_y0 + nub_h],
-                        radius=min(r, nub_w // 2), fill=(170, 170, 170, 255))
+                        radius=min(r, nub_w // 2), fill=nub_col)
 
     # Body background (outline drawn last so it always sits on top of the fill)
-    d.rounded_rectangle([bx0, by0, bx1, by1], radius=r, fill=(26, 26, 26, 255))
+    d.rounded_rectangle([bx0, by0, bx1, by1], radius=r, fill=body_bg)
 
     # Charge fill — FILL_PADDING logical-px gap on every side; 0 = touches the outline
     pad        = FILL_PADDING * S
@@ -363,13 +375,13 @@ def _render_battery(W, H, bat, label=None):
 
     # Outline on top — always fully visible regardless of fill level
     d.rounded_rectangle([bx0, by0, bx1, by1], radius=r,
-                        outline=(136, 136, 136, 255), width=S)
+                        outline=outline, width=S)
 
     # Label centred in body
     fnt  = _load_font(FONT_SIZE * S)
     cx   = bx0 + body_w // 2
     cy   = by0 + body_h // 2
-    d.text((cx, cy), label, font=fnt, fill=(255, 255, 255, 255), anchor="mm")
+    d.text((cx, cy), label, font=fnt, fill=text_col, anchor="mm")
 
     return img.resize((W, H), Image.LANCZOS).filter(
         ImageFilter.UnsharpMask(radius=0.5, percent=180, threshold=0)
@@ -869,7 +881,7 @@ class BatteryWidget:
         W, H   = self.W, self.H
         T      = (1, 1, 1)          # transparent key colour as RGB tuple
 
-        batt   = _render_battery(W, H, bat, label)   # RGBA PIL image
+        batt   = _render_battery(W, H, bat, label, dark=_is_dark_mode())   # RGBA PIL image
 
         # Composite RGBA battery over the transparent key colour
         bg = Image.new("RGB", (W, H), T)

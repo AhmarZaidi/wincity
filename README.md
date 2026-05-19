@@ -28,6 +28,19 @@ python battery_tray.py
 
 The icon appears in the system tray (you may need to expand the overflow area).
 
+### Start as detatched process (optional)
+
+1. Open terminal and run:
+```python
+Start-Process python -ArgumentList "battery_tray.py" -WindowStyle Hidden
+```
+2. The script will run in the background, and the icon will appear in the system tray.
+
+To stop it, open Task Manager, find the Python process, and end it or run:
+```python
+Stop-Process -Name python
+```
+
 ---
 
 ## Build a standalone .exe (recommended)
