@@ -29,19 +29,26 @@
 
 ```
 battery_tray/
-├── main.py            ← entry point
 ├── app/
+│   ├── __init__.py
 │   ├── config.py      constants, colors/rows globals, load/save config & state
 │   ├── system.py      Win32 helpers (DPI, taskbar, dark mode, power mode)
 │   ├── battery.py     IOCTL queries, WMI temp fallback, display formatters
 │   ├── render.py      battery icon renderer
 │   ├── popup.py       hover popup with history graph
 │   └── widget.py      main tkinter widget
+├── assets/
+│   ├── appicon.ico    application icon
+│   └── banner.png     README banner image
 ├── data/
 │   ├── config.json    user-editable settings & colors
+│   ├── state-prev.json previous runtime state (history, elapsed time) - gitignored
 │   └── state.json     runtime state (history, elapsed time) - gitignored
-├── build.ps1          builds dist\WinCity.exe via PyInstaller
+├── dist/
+│   └── WinCity.exe    built executable → will be created after running build.bat or build.ps1
 ├── build.bat          double-click shortcut → runs build.ps1
+├── build.ps1          builds dist\WinCity.exe via PyInstaller
+├── main.py            ← entry point
 ├── README.md          this file
 └── requirements.txt   Python dependencies
 ```
