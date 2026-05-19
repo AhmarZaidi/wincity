@@ -14,12 +14,12 @@ A minimal taskbar battery monitor.
 - **Right-click → Quit** to exit.
 - Auto-hides when a fullscreen window is active or the taskbar is hidden.
 
-| State | Widget colour | Example |
-|---|---|---|
-| Discharging (normal) | 🟢 Green | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/5bdf3f13-4abb-47ee-a9d1-301c0de33661" /> |
-| Discharging (low) | 🔴 Red | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/a31b90cf-61ac-447b-bb35-39e932108e08" /> |
-| Battery saver | 🟡 Yellow | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/97cff425-f577-439e-ad83-c6c8ddc1164c" /> |
-| Charging | 🔵 Blue | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/5afb565f-c966-4584-9ce0-83cfe4fef9ad" /> |
+| State | Example |
+|---|---|
+| Discharging (normal) | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/5bdf3f13-4abb-47ee-a9d1-301c0de33661" /> |
+| Discharging (low) | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/a31b90cf-61ac-447b-bb35-39e932108e08" /> |
+| Battery saver | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/97cff425-f577-439e-ad83-c6c8ddc1164c" /> |
+| Charging | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/5afb565f-c966-4584-9ce0-83cfe4fef9ad" /> |
 
 ---
 
@@ -80,8 +80,11 @@ Key settings:
 
 ## Build a standalone .exe
 
+**Option A - double-click** `build.bat` in Windows Explorer.
+
+**Option B - from a terminal** (PowerShell or cmd):
 ```
-./build.bat
+cmd /c build.bat
 ```
 
 Produces `dist\WinCity.exe` - no Python required to run.

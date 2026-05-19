@@ -2,16 +2,17 @@
 REM ─────────────────────────────────────────────────────────────────────────────
 REM  WinCity – build script
 REM  Run this once on your Windows 11 machine to produce dist\WinCity.exe
+REM  Double-click this file, or run:  cmd /c build.bat
 REM ─────────────────────────────────────────────────────────────────────────────
 
-echo [1/4] Installing dependencies...
+echo [1/3] Installing dependencies...
 python -m pip install -r requirements.txt
 python -m pip install pyinstaller
 
-echo [2/4] Building executable (no console window)...
+echo [2/3] Building executable (no console window)...
 python -m PyInstaller --onefile --noconsole --name WinCity main.py
 
-echo [3/4] Done!
+echo [3/3] Done!
 echo.
 echo  Executable is at:  dist\WinCity.exe
 echo.
