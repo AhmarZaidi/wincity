@@ -933,16 +933,25 @@ class BatteryPopup:
         d.text((ppx0 + int(3 * s), ppy0 + int(2 * s)), "100%",
                font=lfnt, fill=a(self._fg), anchor="lt")
 
+        # Starting-percentage label on the right side of the y-axis
+        _h   = self._history
+        _sp  = _h[0][1] if (_h and len(_h) >= 1) else bat.percent
+        _spy = pct_y(_sp + 8)
+        # Only draw if it won't collide with the "100%" label (need ≥12 px gap)
+        if _spy > ppy0 + int(12 * s):
+            d.text((ppx0 + int(4 * s), _spy), f"{_sp:.0f}%",
+                   font=lfnt, fill=a(self._fg2), anchor="lm")
+
         # left time — always show when elapsed > 0 (anchored at left edge, no overlap risk)
         if elapsed_s > 0:
             d.text((ppx0, lbl_y),
                    _fmt_hm(now_dt - timedelta(seconds=elapsed_s)),
                    font=lfnt, fill=a(self._fg2), anchor="lt")
 
-        # "Now" — only if there’s room left of it (avoids overlapping left label)
-        if (now_px - ppx0) >= min_gap:
-            d.text((now_px, lbl_y), "Now",
-                   font=lfnt, fill=a(self._fg), anchor="mt")
+        # # "Now" — only if there’s room left of it (avoids overlapping left label)
+        # if (now_px - ppx0) >= min_gap:
+        #     d.text((now_px, lbl_y), "Now",
+        #            font=lfnt, fill=a(self._fg), anchor="mt")
 
         # right time — only if enough room from the "Now" line
         if secs_right > 0 and (ppx1 - now_px) >= min_gap // 2:
