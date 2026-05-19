@@ -61,6 +61,7 @@ OR
 ### Clone the repo and run from source:
 
 ```powershell
+git clone https://github.com/AhmarZaidi/wincity
 pip install -r requirements.txt
 python main.py
 ```
