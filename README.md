@@ -1,17 +1,20 @@
-# WinCity for Windows 11
+# WinCity
 
-A minimal taskbar battery monitor — always visible, no clicking needed.  
-Shows time remaining (discharging) or time to full (charging).  
-Hover for a detailed popup with a live history graph.
+A minimal taskbar battery monitor.  
+
+| Dark Mode | Light Mode |
+|------------|------------|
+| <img width="400" height="700" alt="Dark Mode" src="https://github.com/user-attachments/assets/09ff82e6-3054-4428-b8a3-fc3a6cfcb01e" /> | <img width="400" height="700" alt="Light Mode" src="https://github.com/user-attachments/assets/1142ada7-1f02-42c8-bbbd-580430a0686b" /> |
+
 
 ## Features
 
-| State | Widget colour | Label |
+| State | Widget colour | Example |
 |---|---|---|
-| Discharging (normal) | 🟢 Green | Time remaining e.g. `5:10` |
-| Discharging (low) | 🔴 Red | Time remaining e.g. `0:23` |
-| Battery saver | 🟡 Yellow | Time remaining |
-| Charging | 🔵 Blue | Time to full e.g. `1:13` |
+| Discharging (normal) | 🟢 Green | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/5bdf3f13-4abb-47ee-a9d1-301c0de33661" /> |
+| Discharging (low) | 🔴 Red | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/a31b90cf-61ac-447b-bb35-39e932108e08" /> |
+| Battery saver | 🟡 Yellow | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/97cff425-f577-439e-ad83-c6c8ddc1164c" /> |
+| Charging | 🔵 Blue | <img width="50" height="25" alt="image" src="https://github.com/user-attachments/assets/5afb565f-c966-4584-9ce0-83cfe4fef9ad" /> |
 
 - **Left-click** the widget to toggle between time and percentage display.
 - **Hover** to open a popup: status, health, rate, cycle count, temperature, and a scrolling history graph.
@@ -42,6 +45,8 @@ battery_tray/
 ---
 
 ## Quick start
+
+Go to Settings (Win + I) > System > Power & Battery > Turn on Battery Percentage.
 
 ```powershell
 pip install -r requirements.txt
@@ -88,6 +93,13 @@ Produces `dist\WinCity.exe` — no Python required to run.
 2. Copy `dist\WinCity.exe` (or a shortcut) into that folder.
 
 ---
+
+## Troubleshooting
+
+If facing issues like incorrect values at start, or getting stuck, then delete the `data/config.json` file.
+A new file will automatically be created next time it starts.
+
+If issue is still not solved, please raise an issue [here](https://github.com/AhmarZaidi/wincity/issues)
 
 ## Uninstall
 
