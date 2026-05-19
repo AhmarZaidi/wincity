@@ -4,11 +4,9 @@
   <img src="./assets/banner.png" alt="WinCity Banner" width="100%">
 </p>
 
-A minimal taskbar battery monitor.  
-
 | Dark Mode | Light Mode |
 |------------|------------|
-| <img width="400" height="700" alt="Dark Mode" src="https://github.com/user-attachments/assets/09ff82e6-3054-4428-b8a3-fc3a6cfcb01e" /> | <img width="400" height="700" alt="Light Mode" src="https://github.com/user-attachments/assets/1142ada7-1f02-42c8-bbbd-580430a0686b" /> |
+| <img width="400" height="700" alt="image" src="https://github.com/user-attachments/assets/3ec8d9f7-f468-4386-b550-a1dac6c667f0" /> | <img width="400" height="700" alt="image" src="https://github.com/user-attachments/assets/53832fc3-fa15-4761-a5e4-2b87683b7b58" /> |
 
 
 ## Features

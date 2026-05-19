@@ -48,6 +48,7 @@ class BatteryPopup:
         "folder":      "\uE8B7",
         "settings":    "\uE713",
         "close":       "\uE7E8",
+        "github":      "\uE71B",
     }
 
     def __init__(self, root, wx, wy, ww, wh, bat, label, secs,
@@ -93,9 +94,11 @@ class BatteryPopup:
 
         _b   = int(self._QH * s)
         _pxi = int(self._PX  * s)
+        _gap = int(6 * s)
         self._btn_xr = {
-            "settings": (_pxi,           _pxi + _b),
-            "quit":     (pw - _pxi - _b, pw - _pxi),
+            "settings": (_pxi,                              _pxi + _b),
+            "github":   (pw - _pxi - _b - _gap - _b,        pw - _pxi - _gap - _b),
+            "quit":     (pw - _pxi - _b,                    pw - _pxi),
         }
 
         self.win = tk.Toplevel(root)
@@ -192,14 +195,16 @@ class BatteryPopup:
 
         b     = int(self._QH * s)
         bar_y = y + b // 2
-        _cx   = {"settings": px + b // 2, "quit": w - px - b // 2}
-        for btn_key, glyph in [("settings", self._IC["settings"]), ("quit", self._IC["close"])]:
-            cx      = _cx[btn_key]
+        for btn_key, glyph in [
+            ("settings", self._IC["settings"]),
+            ("github",   self._IC["github"]),
+            ("quit",     self._IC["close"]),
+        ]:
+            bx0, bx1 = self._btn_xr[btn_key]
+            cx      = (bx0 + bx1) // 2
             hov     = (hover_key == btn_key)
             is_quit = (btn_key == "quit")
             if hov:
-                bx0 = cx - b // 2
-                bx1 = cx + b // 2
                 d.rounded_rectangle([bx0, y + int(2 * s), bx1, y + b - int(2 * s)],
                                     radius=int(4 * s), fill=a(self._hov))
             ic_col = self._red if is_quit else (self._fg if hov else self._icol)
@@ -418,6 +423,9 @@ class BatteryPopup:
         btn = self._btn_hit(event.x, event.y)
         if btn == "quit":
             self._quit_cb()
+        elif btn == "github":
+            import webbrowser
+            webbrowser.open("https://github.com/AhmarZaidi/wincity")
         elif btn == "settings":
             pass  # TODO: open settings panel
 
