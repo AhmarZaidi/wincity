@@ -105,8 +105,21 @@ Produces `dist\WinCity.exe` - no Python required to run.
 
 ## Auto-start on login
 
-1. Press **Win + R**, type `shell:startup`, press Enter.
-2. Copy `dist\WinCity.exe` (or a shortcut) into that folder.
+> The `data/` folder (config, state) is always created next to wherever `WinCity.exe` lives — keep the exe in a permanent location before setting up auto-start.
+
+**Steps (silent start — no console window flashes at login):**
+
+1. Place `WinCity.exe` somewhere permanent, e.g. `C:\Users\<YourName>\Apps\WinCity\WinCity.exe`.
+2. Press **Win + R**, type `shell:startup`, press **Enter** — this opens your Startup folder.
+3. Right-click inside the Startup folder → **New → Shortcut**.
+4. In the *location* field, paste the following (replace the path with your actual exe path):
+   ```
+   powershell.exe -WindowStyle Hidden -Command "Start-Process 'C:\Users\<YourName>\Apps\WinCity\WinCity.exe'"
+   ```
+   > Update the path to match where you placed `WinCity.exe`.
+5. Click **Next**, name the shortcut (e.g. `WinCity`), click **Finish**.
+
+WinCity will now start silently in the background every time you log in, with no console window.
 
 ---
 
