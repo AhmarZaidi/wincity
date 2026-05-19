@@ -27,6 +27,7 @@ FILL_PADDING      = 0     # gap in pixels between the outline and the fill colou
 FILL_RIGHT_EXTEND = 0     # extra px added to the fill's right edge (corrects visual right gap on full charge)
 FONT_SIZE           = 22  # label font size in points
 RENDER_SCALE        = 8   # internal supersampling (higher = crisper; 4-8 recommended)
+OUTLINE_WIDTH       = 1   # battery icon outline thickness in logical pixels
 VISIBILITY_POLL_MS  = 500 # ms between taskbar visibility checks (lower = snappier hide/show)
 
 # ── Hover popup ────────────────────────────────────────────────────────────
@@ -375,7 +376,7 @@ def _render_battery(W, H, bat, label=None, dark=True):
 
     # Outline on top — always fully visible regardless of fill level
     d.rounded_rectangle([bx0, by0, bx1, by1], radius=r,
-                        outline=outline, width=S)
+                        outline=outline, width=OUTLINE_WIDTH * S)
 
     # Label centred in body
     fnt  = _load_font(FONT_SIZE * S)
