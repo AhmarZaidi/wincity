@@ -433,8 +433,7 @@ class BatteryPopup:
     _TH = 28   # title row height
     _SH = 13   # separator block height
     _RH = 26   # info row height
-    _QH   = 30   # action bar row height
-    _TTPH = 18   # tooltip strip height below action bar
+    _QH = 30   # action bar row height
 
     _IC = {
         "status":      "\uE8A1",   # Info
@@ -486,7 +485,7 @@ class BatteryPopup:
         s  = _dpi_scale()
         pw = max(int(self._MIN_W * s), self._MIN_W)
         ph = int((self._PY + self._TH + self._SH
-                  + 8 * self._RH + self._SH + self._QH + self._TTPH + self._PY) * s)
+                  + 8 * self._RH + self._SH + self._QH + self._PY) * s)
 
         self._startup_on        = False  # placeholder toggle state
         self._pw, self._ph, self._s = pw, ph, s
@@ -501,10 +500,8 @@ class BatteryPopup:
         _g   = int(4         * s)
         _pxi = int(self._PX  * s)
         self._btn_xr = {
-            "startup":  (_pxi,               _pxi + _b),
-            "folder":   (_pxi + _b + _g,     _pxi + 2*_b + _g),
-            "settings": (_pxi + 2*(_b+_g),   _pxi + 3*_b + 2*_g),
-            "quit":     (pw - _pxi - _b,     pw - _pxi),
+            "settings": (_pxi,           _pxi + _b),
+            "quit":     (pw - _pxi - _b, pw - _pxi),
         }
 
         self.win = tk.Toplevel(root)
@@ -601,28 +598,17 @@ class BatteryPopup:
         d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
         y += int(self._SH * s)
 
-        # Action bar — 3 icon buttons on the left, quit on the right
-        b      = int(self._QH * s)   # button slot width (square)
-        g      = int(4  * s)         # gap between adjacent buttons
-        bar_y  = y + b // 2          # vertical centre of the action bar
+        # Action bar — settings on the left, quit on the right
+        b      = int(self._QH * s)
+        bar_y  = y + b // 2
 
         _btns = [
-            ("startup",  self._IC["startup_on" if self._startup_on else "startup_off"]),
-            ("folder",   self._IC["folder"]),
             ("settings", self._IC["settings"]),
             ("quit",     self._IC["close"]),
         ]
         _cx = {
-            "startup":  px + b // 2,
-            "folder":   px + b + g + b // 2,
-            "settings": px + 2*(b + g) + b // 2,
+            "settings": px + b // 2,
             "quit":     w - px - b // 2,
-        }
-        _tips = {
-            "startup":  f"Run at Startup: {'On' if self._startup_on else 'Off'}",
-            "folder":   "Open File Location",
-            "settings": "Settings",
-            "quit":     "Quit",
         }
 
         for btn_key, glyph in _btns:
@@ -636,12 +622,6 @@ class BatteryPopup:
                                      radius=int(4 * s), fill=a(self._hov))
             ic_col = self._red if is_quit else (self._fg if hov else self._icol)
             d.text((cx, bar_y), glyph, font=ifnt, fill=a(ic_col), anchor="mm")
-
-        # Tooltip strip — shown below action bar when a button is hovered
-        if hover_key in _tips:
-            tip_y = y + b + int(self._TTPH * s) // 2
-            d.text((w // 2, tip_y), _tips[hover_key],
-                   font=nfnt, fill=a(self._fg2), anchor="mm")
 
         # Composite onto transparent key — corners outside rounded rect become invisible
         result = Image.new("RGB", (w, h), self._TC_RGB)
