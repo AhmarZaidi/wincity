@@ -6,11 +6,11 @@ REM  Double-click this file, or run:  cmd /c build.bat
 REM ─────────────────────────────────────────────────────────────────────────────
 
 echo [1/3] Installing dependencies...
-python -m pip install -r requirements.txt
-python -m pip install pyinstaller
+python -m pip install -r requirements.txt < nul
+python -m pip install pyinstaller < nul
 
 echo [2/3] Building executable (no console window)...
-python -m PyInstaller --onefile --noconsole --name WinCity main.py
+python -m PyInstaller --onefile --noconsole --name WinCity main.py < nul
 
 echo [3/3] Done!
 echo.

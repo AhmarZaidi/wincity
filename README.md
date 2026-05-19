@@ -105,6 +105,17 @@ A new file will automatically be created next time it starts.
 
 If issue is still not solved, please raise an issue [here](https://github.com/AhmarZaidi/wincity/issues)
 
+## Known Issues
+
+- Graph may be buggy in some edge cases. Especially when charging.
+- Charging time estimation may not be accurate.
+- Settings button is not implemented yet.
+
+## Todos
+
+- [ ] Add settings page to configure colors, rows, thresholds, etc.
+- [ ] Add more battery info like cycle count, temperature, etc.
+
 ## Uninstall
 
 Quit via right-click → Quit, then delete the folder and remove the startup shortcut.
