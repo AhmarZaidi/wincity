@@ -50,7 +50,15 @@ battery_tray/
 
 ## Quick start
 
-Go to Settings (Win + I) > System > Power & Battery > Turn on Battery Percentage.
+Pre-requisite: Go to Settings (Win + I) > System > Power & Battery > Turn on Battery Percentage.
+
+### Download and run the released .exe:
+
+Download the latest release from the [Releases](https://github.com/AhmarZaidi/wincity/releases/tag/v1.0.0) page, and run `WinCity.exe`.
+
+OR
+
+### Clone the repo and run from source:
 
 ```powershell
 pip install -r requirements.txt
