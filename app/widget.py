@@ -62,6 +62,7 @@ class BatteryWidget:
         self._last_temp_c       = None
         self._history           = collections.deque(maxlen=720)
         self._discharge_start   = None
+        self._charge_start      = None
         self._prev_plugged      = None
         self._last_elapsed_secs = None
         self._save_counter      = 0
@@ -87,6 +88,13 @@ class BatteryWidget:
             if 0 < elapsed_wall < 86400:
                 self._discharge_start = now_mono - elapsed_wall
                 self._prev_plugged    = False
+
+        cse = state.get("charge_start_epoch")
+        if cse is not None:
+            elapsed_wall = now_epoch - cse
+            if 0 < elapsed_wall < 86400:
+                self._charge_start = now_mono - elapsed_wall
+                self._prev_plugged = True
 
         # ── Window setup ──────────────────────────────────────────────────
         self.root = tk.Tk()
@@ -205,18 +213,29 @@ class BatteryWidget:
         if bat is not None:
             plugged = bat.power_plugged
             if self._prev_plugged is None:
-                if not plugged:
+                if plugged:
+                    self._charge_start = time.monotonic()
+                else:
                     self._discharge_start = time.monotonic()
             elif self._prev_plugged and not plugged:
+                # Charger disconnected — reset timer and graph
+                self._history.clear()
                 self._discharge_start = time.monotonic()
+                self._charge_start    = None
                 self._persist_state()
             elif not self._prev_plugged and plugged:
+                # Charger connected — reset timer and graph
+                self._history.clear()
+                self._charge_start    = time.monotonic()
                 self._discharge_start = None
                 self._persist_state()
             self._prev_plugged = plugged
 
-        if self._discharge_start is not None and bat is not None and not bat.power_plugged:
-            self._last_elapsed_secs = int(time.monotonic() - self._discharge_start)
+        _now = time.monotonic()
+        if bat is not None and bat.power_plugged and self._charge_start is not None:
+            self._last_elapsed_secs = int(_now - self._charge_start)
+        elif bat is not None and not bat.power_plugged and self._discharge_start is not None:
+            self._last_elapsed_secs = int(_now - self._discharge_start)
         else:
             self._last_elapsed_secs = None
 
@@ -239,6 +258,9 @@ class BatteryWidget:
         dse = None
         if self._discharge_start is not None:
             dse = round(now_epoch - (now_mono - self._discharge_start), 2)
+        cse = None
+        if self._charge_start is not None:
+            cse = round(now_epoch - (now_mono - self._charge_start), 2)
         history_out = [
             [round(now_epoch - (now_mono - t), 1), round(p, 1), int(pl)]
             for t, p, pl in self._history
@@ -246,6 +268,7 @@ class BatteryWidget:
         config.save_state({
             "schema":                1,
             "discharge_start_epoch": dse,
+            "charge_start_epoch":    cse,
             "show_percent":          self._show_percent,
             "history":               history_out,
         })
