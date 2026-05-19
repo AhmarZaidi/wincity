@@ -29,7 +29,7 @@ OFFSET_FROM_TOP   = None  # None = auto-centre vertically; or set an int (px fro
 
 # ── Appearance ────────────────────────────────────────────────────────────────
 UPDATE_INTERVAL = 10      # seconds between background refreshes
-LOW_PCT         = 10      # battery % below which fill turns red
+LOW_PCT         = 20      # battery % below which fill turns red
 CORNER_RADIUS   = 8      # corner radius for the battery icon in pixels (0 = square)
 FILL_PADDING      = 0     # gap in pixels between the outline and the fill colour
 FILL_RIGHT_EXTEND = 0     # extra px added to the fill's right edge (corrects visual right gap on full charge)
@@ -68,7 +68,95 @@ _DEFAULT_CONFIG = {
     "POPUP_TITLE_SIZE":   16,
     "POPUP_TEXT_SIZE":    12,
     "POPUP_ICON_SIZE":    16,
+    # Popup rows — order determines display order; set visible=false to hide a row.
+    # The "graph" entry controls where the history chart is injected.
+    "rows": [
+        {"id": "status",      "visible": True},
+        {"id": "percentage",  "visible": True},
+        {"id": "time",        "visible": True},
+        {"id": "rate",        "visible": True},
+        {"id": "elapsed",     "visible": True},
+        {"id": "graph",       "visible": True},
+        {"id": "screen_on",   "visible": True},
+        {"id": "power_mode",  "visible": True},
+        {"id": "cycle_count", "visible": True},
+        {"id": "temperature", "visible": True},
+        {"id": "health",      "visible": True},
+    ],
+    # Theme colors — edit as hex strings: '#rrggbb' (RGB) or '#rrggbbaa' (RGBA with alpha).
+    "colors": {
+        "dark": {
+            "bg":              "#1c1c1c",
+            "fg":              "#ffffff",
+            "fg2":             "#9d9d9d",
+            "border":          "#3c3c3c",
+            "icon":            "#c8c8c8",
+            "danger":          "#e04040",
+            "hover":           "#2d2d2d",
+            "widget_body":     "#1a1a1a",
+            "widget_nub":      "#aaaaaa",
+            "widget_outline":  "#888888",
+            "widget_text":     "#ffffff",
+            "graph_container": "#2c2c32",
+        },
+        "light": {
+            "bg":              "#f9f9f9",
+            "fg":              "#1a1a1a",
+            "fg2":             "#5c5c5c",
+            "border":          "#dedede",
+            "icon":            "#555555",
+            "danger":          "#c42b1c",
+            "hover":           "#ebebeb",
+            "widget_body":     "#ffffff",
+            "widget_nub":      "#1e1e1e",
+            "widget_outline":  "#1e1e1e",
+            "widget_text":     "#1a1a1a",
+            "graph_container": "#cdcfd7",
+        },
+        "graph": {
+            "charging_fill": "#0078d45f",  # last 2 hex digits = alpha
+            "charging_line": "#008ce6eb",
+            "low_fill":      "#f0be2864",
+            "low_line":      "#d7a00ff0",
+            "normal_fill":   "#4cbb6464",
+            "normal_line":   "#28aa46f0",
+        },
+        "widget": {
+            "fill_charging": "#3296f0",
+            "fill_low":      "#dc3232",
+            "fill_saver":    "#f0be28",
+            "fill_normal":   "#3cc850",
+        },
+    },
 }
+
+
+def _colors_to_tuples(d):
+    """Convert color values (hex strings or RGB/RGBA lists) to tuples for PIL.
+    Accepts '#rrggbb' (RGB) or '#rrggbbaa' (RGBA). Lists are also accepted for
+    backward compatibility.
+    """
+    result = {}
+    for k, v in d.items():
+        if isinstance(v, str) and v.startswith("#"):
+            h = v.lstrip("#")
+            if len(h) in (6, 8):
+                result[k] = tuple(int(h[i:i + 2], 16) for i in range(0, len(h), 2))
+            else:
+                result[k] = v  # unknown hex length — pass through
+        elif isinstance(v, list):
+            result[k] = tuple(v)
+        else:
+            result[k] = v
+    return result
+
+
+# ── Runtime config globals (overwritten by _load_config) ──────────────────────
+ROWS_CONFIG   = list(_DEFAULT_CONFIG["rows"])
+COLORS_DARK   = _colors_to_tuples(_DEFAULT_CONFIG["colors"]["dark"])
+COLORS_LIGHT  = _colors_to_tuples(_DEFAULT_CONFIG["colors"]["light"])
+COLORS_GRAPH  = _colors_to_tuples(_DEFAULT_CONFIG["colors"]["graph"])
+COLORS_WIDGET = _colors_to_tuples(_DEFAULT_CONFIG["colors"]["widget"])
 
 # Enable per-monitor DPI awareness as early as possible so all coordinates and
 # rendering use physical pixels instead of being scaled by Windows.
@@ -435,6 +523,19 @@ def _load_config():
     POPUP_TEXT_SIZE     = _gi("POPUP_TEXT_SIZE",     POPUP_TEXT_SIZE)
     POPUP_ICON_SIZE     = _gi("POPUP_ICON_SIZE",     POPUP_ICON_SIZE)
 
+    global ROWS_CONFIG, COLORS_DARK, COLORS_LIGHT, COLORS_GRAPH, COLORS_WIDGET
+
+    rows = cfg.get("rows")
+    if isinstance(rows, list):
+        ROWS_CONFIG = rows
+
+    colors = cfg.get("colors", {})
+    if isinstance(colors, dict):
+        if "dark"   in colors: COLORS_DARK   = _colors_to_tuples(colors["dark"])
+        if "light"  in colors: COLORS_LIGHT  = _colors_to_tuples(colors["light"])
+        if "graph"  in colors: COLORS_GRAPH  = _colors_to_tuples(colors["graph"])
+        if "widget" in colors: COLORS_WIDGET = _colors_to_tuples(colors["widget"])
+
 
 def _load_state():
     """Return parsed state dict from data/state.json, or {} on any failure."""
@@ -489,13 +590,13 @@ def _render_battery(W, H, bat, label=None, dark=True):
         label  = time_s if time_s else f"{pct:.0f}%"
 
     if plugged:
-        fill_col = (50,  150, 240, 255)
+        fill_col = COLORS_WIDGET["fill_charging"]
     elif pct <= LOW_PCT:
-        fill_col = (220,  50,  50, 255)
+        fill_col = COLORS_WIDGET["fill_low"]
     elif _get_power_mode() == "Battery Saver":
-        fill_col = (240, 190,  40, 255)
+        fill_col = COLORS_WIDGET["fill_saver"]
     else:
-        fill_col = (60,  200,  80, 255)
+        fill_col = COLORS_WIDGET["fill_normal"]
 
     nub_w  = 5 * S
     bx0, by0 = 2 * S, 2 * S
@@ -505,16 +606,11 @@ def _render_battery(W, H, bat, label=None, dark=True):
     r      = CORNER_RADIUS * S
 
     # Theme-dependent colors
-    if dark:
-        body_bg  = (26,  26,  26,  255)
-        nub_col  = (170, 170, 170, 255)
-        outline  = (136, 136, 136, 255)
-        text_col = (255, 255, 255, 255)
-    else:
-        body_bg  = (255, 255, 255, 255)
-        nub_col  = (30,  30,  30,  255)
-        outline  = (30,  30,  30,  255)
-        text_col = (26,  26,  26,  255)
+    _c       = COLORS_DARK if dark else COLORS_LIGHT
+    body_bg  = _c["widget_body"]    + (255,)
+    nub_col  = _c["widget_nub"]     + (255,)
+    outline  = _c["widget_outline"] + (255,)
+    text_col = _c["widget_text"]    + (255,)
 
     # Nub
     nub_h  = max(4 * S, body_h // 3)
@@ -641,34 +737,34 @@ class BatteryPopup:
         self._history      = history  # list of (monotonic_t, percent, plugged)
         dark = _is_dark_mode()
 
-        if dark:
-            self._bg   = (28,  28,  28)
-            self._fg   = (255, 255, 255)
-            self._fg2  = (157, 157, 157)
-            self._bdr  = (60,  60,  60)
-            self._icol = (200, 200, 200)
-            self._red  = (224, 64,  64)
-            self._hov  = (45,  45,  45)
-        else:
-            self._bg   = (249, 249, 249)
-            self._fg   = (26,  26,  26)
-            self._fg2  = (92,  92,  92)
-            self._bdr  = (222, 222, 222)
-            self._icol = (85,  85,  85)
-            self._red  = (196, 43,  28)
-            self._hov  = (235, 235, 235)
+        _c         = COLORS_DARK if dark else COLORS_LIGHT
+        self._bg   = _c["bg"]
+        self._fg   = _c["fg"]
+        self._fg2  = _c["fg2"]
+        self._bdr  = _c["border"]
+        self._icol = _c["icon"]
+        self._red  = _c["danger"]
+        self._hov  = _c["hover"]
 
-        s  = _dpi_scale()
-        pw = max(int(self._MIN_W * s), self._MIN_W)
+        s          = _dpi_scale()
+        pw         = max(int(self._MIN_W * s), self._MIN_W)
+        _vis       = [r for r in ROWS_CONFIG if r.get("visible", True)]
+        _n_rows    = sum(1 for r in _vis if r.get("id") != "graph")
+        _has_graph = any(r.get("id") == "graph" for r in _vis)
         ph = int((self._PY + self._TH + self._SH
-                  + 10 * self._RH + self._GH + self._SH + self._QH + self._PY) * s)
+                  + _n_rows * self._RH
+                  + (_has_graph * self._GH)
+                  + self._SH + self._QH + self._PY) * s)
 
-        self._startup_on        = False  # placeholder toggle state
+        self._startup_on        = False  # TODO: implement startup toggle
         self._pw, self._ph, self._s = pw, ph, s
-        self._img_cache         = {}     # (hover_key, startup_on) -> PhotoImage
+        self._img_cache         = {}     # hover_key -> PhotoImage
 
         # Action bar y bounds (all buttons share the same row)
-        self._bar_y0 = int((self._PY + self._TH + self._SH + 10 * self._RH + self._GH + self._SH) * s)
+        self._bar_y0 = int((self._PY + self._TH + self._SH
+                            + _n_rows * self._RH
+                            + (_has_graph * self._GH)
+                            + self._SH) * s)
         self._bar_y1 = self._bar_y0 + int(self._QH * s)
 
         # Button x bounds for hit-testing
@@ -692,7 +788,7 @@ class BatteryPopup:
         self._cv.pack()
 
         _init_img    = ImageTk.PhotoImage(self._render(pw, ph, s, None))
-        self._img_cache[(None, self._startup_on)] = _init_img
+        self._img_cache[None] = _init_img
         self._img_id = self._cv.create_image(0, 0, anchor="nw", image=_init_img)
         self._cv.bind("<Button-1>", self._on_click)
         self._cv.bind("<Motion>",   self._on_motion)
@@ -749,11 +845,14 @@ class BatteryPopup:
         d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
         y += int(self._SH * s)
 
-        # ── Info rows (graph injected after Elapsed, index 4) ───────────────
-        GRAPH_AFTER_ROW = 4
-        for i, row in enumerate(self._rows()):
-            icon, name, value = row[:3]
-            val_icon = row[3] if len(row) > 3 else None
+        # ── Info rows (order and visibility from ROWS_CONFIG) ──────────────
+        for row in self._rows():
+            if row[0] == "graph":
+                self._draw_graph(d, img, px, y, w, s, a)
+                y += int(self._GH * s)
+                continue
+            icon, name, value = row[1], row[2], row[3]
+            val_icon = row[4] if len(row) > 4 else None
             my = y + int(self._RH * s) // 2
             d.text((px + int(11 * s), my), icon,  font=ifnt, fill=a(self._icol), anchor="mm")
             d.text((px + int(26 * s), my), name,  font=nfnt, fill=a(self._fg2),  anchor="lm")
@@ -769,10 +868,6 @@ class BatteryPopup:
             else:
                 d.text((w - px, my), value, font=nfnt, fill=a(self._fg), anchor="rm")
             y += int(self._RH * s)
-
-            if i == GRAPH_AFTER_ROW:
-                self._draw_graph(d, img, px, y, w, s, a)
-                y += int(self._GH * s)
 
         # Separator before action bar
         d.line([(px, y + 4), (w - px, y + 4)], fill=a(self._bdr), width=1)
@@ -995,32 +1090,41 @@ class BatteryPopup:
         return _load_font(size)
 
     def _rows(self):
-        bat, label = self._bat, self._label
+        bat = self._bat
         if bat is None:
-            return [(self._IC["status"], "Status", "Unknown")]
+            yield ("status", self._IC["status"], "Status", "Unknown")
+            return
+
         if self._full_mwh:
             remaining_wh = self._full_mwh * bat.percent / 100 / 1000
             pct = f"{bat.percent:.0f}% ({remaining_wh:.1f} Wh)"
         else:
             pct = f"{bat.percent:.0f}%"
-        t_lbl = "Time to Full" if bat.power_plugged else "Time Left"
-        t_val = format_time_long(self._secs) or ("Full" if bat.percent >= 100 else "—")
-        if bat.power_plugged:
-            status_row = (self._IC["status"], "Status", "Charging", self._IC["thunder"])
-        else:
-            status_row = (self._IC["status"], "Status", "Discharging")
-        return [
-            status_row,
-            (self._IC["pct"],     "Percentage",  pct),
-            (self._IC["time"],    t_lbl,         t_val),
-            (self._IC["rate"],    "Rate",        _fmt_rate(self._rate_mw)),
-            (self._IC["elapsed"], "Elapsed",     format_time_long(self._elapsed_secs) or "—"),
-            (self._IC["screen"],  "Screen On",   "—"),
-            (self._IC["power"],   "Power Mode",  _get_power_mode()),
-            (self._IC["cycle"],   "Cycle Count", str(self._cycle_count) if self._cycle_count is not None else "—"),
-            (self._IC["temp"],    "Temperature", f"{self._temp_c} °C" if self._temp_c is not None else "—"),
-            (self._IC["health"],  "Health",      _fmt_health(self._designed_mwh, self._full_mwh)),
-        ]
+        t_lbl        = "Time to Full" if bat.power_plugged else "Time Left"
+        t_val        = format_time_long(self._secs) or ("Full" if bat.percent >= 100 else "—")
+        status_extra = (self._IC["thunder"],) if bat.power_plugged else ()
+
+        _data = {
+            "status":      (self._IC["status"],  "Status",      "Charging" if bat.power_plugged else "Discharging") + status_extra,
+            "percentage":  (self._IC["pct"],     "Percentage",  pct),
+            "time":        (self._IC["time"],     t_lbl,         t_val),
+            "rate":        (self._IC["rate"],     "Rate",        _fmt_rate(self._rate_mw)),
+            "elapsed":     (self._IC["elapsed"],  "Elapsed",     format_time_long(self._elapsed_secs) or "—"),
+            "screen_on":   (self._IC["screen"],   "Screen On",   "—"),  # TODO: implement screen-on time tracking
+            "power_mode":  (self._IC["power"],    "Power Mode",  _get_power_mode()),
+            "cycle_count": (self._IC["cycle"],    "Cycle Count", str(self._cycle_count) if self._cycle_count is not None else "—"),
+            "temperature": (self._IC["temp"],     "Temperature", f"{self._temp_c} °C" if self._temp_c is not None else "—"),
+            "health":      (self._IC["health"],   "Health",      _fmt_health(self._designed_mwh, self._full_mwh)),
+        }
+
+        for entry in ROWS_CONFIG:
+            rid = entry.get("id")
+            if not entry.get("visible", True):
+                continue
+            if rid == "graph":
+                yield ("graph", None, None, None)
+            elif rid in _data:
+                yield (rid,) + _data[rid]
 
     # ── Interaction ───────────────────────────────────────────────────────
 
@@ -1035,20 +1139,17 @@ class BatteryPopup:
 
     def _refresh_image(self, hover_key):
         """Display the cached (or freshly rendered) image for the given hover state."""
-        ck = (hover_key, self._startup_on)
-        if ck not in self._img_cache:
-            self._img_cache[ck] = ImageTk.PhotoImage(
+        if hover_key not in self._img_cache:
+            self._img_cache[hover_key] = ImageTk.PhotoImage(
                 self._render(self._pw, self._ph, self._s, hover_key))
-        self._cv.itemconfig(self._img_id, image=self._img_cache[ck])
+        self._cv.itemconfig(self._img_id, image=self._img_cache[hover_key])
 
     def _on_click(self, event):
         btn = self._btn_hit(event.x, event.y)
         if btn == "quit":
             self._quit_cb()
-        elif btn == "startup":
-            self._startup_on = not self._startup_on
-            self._img_cache.clear()   # icon changes — invalidate all cached renders
-            self._refresh_image("startup")
+        elif btn == "settings":
+            pass  # TODO: open settings panel
 
     def _on_motion(self, event):
         btn = self._btn_hit(event.x, event.y)
@@ -1092,12 +1193,6 @@ class BatteryPopup:
 # ── Taskbar widget ────────────────────────────────────────────────────────────
 
 class BatteryWidget:
-    BG     = "#1c1c1c"
-    GREEN  = "#3cc850"
-    BLUE   = "#3296f0"
-    RED    = "#dc3232"
-    FG     = "#ffffff"
-    BORDER = "#3a3a3a"
 
     @staticmethod
     def _should_show():
@@ -1178,7 +1273,6 @@ class BatteryWidget:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", 0.96)
-        self.root.configure(bg=self.BG)
         self.root.resizable(False, False)
 
         tb     = _get_taskbar_rect()
