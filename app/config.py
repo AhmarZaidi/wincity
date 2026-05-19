@@ -4,9 +4,15 @@ All runtime globals live here so other modules can do `import config; config.X`.
 """
 import json
 import pathlib
+import sys
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-_DATA_DIR    = pathlib.Path(__file__).parent.parent / "data"
+# When frozen by PyInstaller (--onefile), __file__ is inside a temp extraction
+# dir; use the exe location instead so data/ is found next to the exe.
+_BASE_DIR    = (pathlib.Path(sys.executable).parent
+                if getattr(sys, "frozen", False)
+                else pathlib.Path(__file__).parent.parent)
+_DATA_DIR    = _BASE_DIR / "data"
 _CONFIG_FILE = _DATA_DIR / "config.json"
 _STATE_FILE  = _DATA_DIR / "state.json"
 

@@ -5,11 +5,11 @@ REM  Run this once on your Windows 11 machine to produce dist\WinCity.exe
 REM ─────────────────────────────────────────────────────────────────────────────
 
 echo [1/4] Installing dependencies...
-pip install -r requirements.txt
-pip install pyinstaller
+python -m pip install -r requirements.txt
+python -m pip install pyinstaller
 
 echo [2/4] Building executable (no console window)...
-pyinstaller --onefile --noconsole --name WinCity main.py
+python -m PyInstaller --onefile --noconsole --name WinCity main.py
 
 echo [3/4] Done!
 echo.
