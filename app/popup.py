@@ -19,6 +19,91 @@ from . import config
 from . import system
 from . import battery as bat_mod
 from .render import load_font
+import ctypes
+from ctypes import wintypes
+
+# ── Win32 structures for icon extraction ──────────────────────────────────────
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", wintypes.DWORD),
+        ("biWidth", ctypes.c_long),
+        ("biHeight", ctypes.c_long),
+        ("biPlanes", wintypes.WORD),
+        ("biBitCount", wintypes.WORD),
+        ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD),
+        ("biXPelsPerMeter", ctypes.c_long),
+        ("biYPelsPerMeter", ctypes.c_long),
+        ("biClrUsed", wintypes.DWORD),
+        ("biClrImportant", wintypes.DWORD)
+    ]
+
+class BITMAPINFO(ctypes.Structure):
+    _fields_ = [
+        ("bmiHeader", BITMAPINFOHEADER),
+        ("bmiColors", wintypes.DWORD * 3)
+    ]
+
+class SHFILEINFOW(ctypes.Structure):
+    _fields_ = [
+        ("hIcon", wintypes.HANDLE),
+        ("iIcon", ctypes.c_int),
+        ("dwAttributes", wintypes.DWORD),
+        ("szDisplayName", ctypes.c_wchar * 260),
+        ("szTypeName", ctypes.c_wchar * 80)
+    ]
+
+def get_app_icon(filepath, size=16):
+    """Extract the native Windows shell icon for filepath as an RGBA PIL Image."""
+    if not filepath or not os.path.exists(filepath):
+        return None
+    try:
+        shfi = SHFILEINFOW()
+        flags = 0x000000100 | (0x000000001 if size <= 16 else 0x000000000)
+        res = ctypes.windll.shell32.SHGetFileInfoW(
+            ctypes.c_wchar_p(filepath), 0, ctypes.byref(shfi), ctypes.sizeof(shfi), flags
+        )
+        if not res or not shfi.hIcon:
+            return None
+        hicon = shfi.hIcon
+
+        hdc_screen = ctypes.windll.user32.GetDC(None)
+        hdc_mem = ctypes.windll.gdi32.CreateCompatibleDC(hdc_screen)
+
+        bmi = BITMAPINFO()
+        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bmi.bmiHeader.biWidth = size
+        bmi.bmiHeader.biHeight = -size
+        bmi.bmiHeader.biPlanes = 1
+        bmi.bmiHeader.biBitCount = 32
+        bmi.bmiHeader.biCompression = 0
+
+        bits = ctypes.c_void_p()
+        hbmp = ctypes.windll.gdi32.CreateDIBSection(
+            hdc_mem, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0
+        )
+        if not hbmp:
+            ctypes.windll.user32.ReleaseDC(None, hdc_screen)
+            ctypes.windll.gdi32.DeleteDC(hdc_mem)
+            ctypes.windll.user32.DestroyIcon(hicon)
+            return None
+
+        old_bmp = ctypes.windll.gdi32.SelectObject(hdc_mem, hbmp)
+        ctypes.windll.user32.DrawIconEx(hdc_mem, 0, 0, hicon, size, size, 0, None, 0x0003)
+
+        num_bytes = size * size * 4
+        buffer = ctypes.string_at(bits, num_bytes)
+        img = Image.frombuffer("RGBA", (size, size), buffer, "raw", "BGRA", 0, 1)
+        img = img.copy()
+
+        ctypes.windll.gdi32.SelectObject(hdc_mem, old_bmp)
+        ctypes.windll.gdi32.DeleteObject(hbmp)
+        ctypes.windll.gdi32.DeleteDC(hdc_mem)
+        ctypes.windll.user32.ReleaseDC(None, hdc_screen)
+        ctypes.windll.user32.DestroyIcon(hicon)
+        return img
+    except Exception:
+        return None
 
 
 # ── Row display names ─────────────────────────────────────────────────────────
@@ -238,7 +323,7 @@ class BatteryPopup:
                       + self._SH + self._QH + self._PY) * s)
         elif self.page == "about":
             ph = int((self._PY + self._TH + self._SH
-                      + 9 * self._RH
+                      + 5.6 * self._RH
                       + self._SH + self._QH + self._PY) * s)
         else:
             ph = int(400 * s)
@@ -341,7 +426,7 @@ class BatteryPopup:
         elif self.page == "rows_config":
             y = self._render_rows_config(d, px, y, w, s, a, ifnt, nfnt)
         elif self.page == "apps":
-            y = self._render_apps(d, px, y, w, s, a, ifnt, nfnt)
+            y = self._render_apps(d, img, px, y, w, s, a, ifnt, nfnt)
         elif self.page == "about":
             y = self._render_about(d, px, y, w, s, a, ifnt, nfnt, tfnt, sfnt)
 
@@ -432,7 +517,7 @@ class BatteryPopup:
                 yield (rid,) + _data[rid]
 
     def _battery_estimate_str(self):
-        """Estimate runtime to 0% (discharge) or 100% (charge) from rate."""
+        """Estimate total runtime = elapsed time + remaining time to 0% (discharge) or 100% (charge)."""
         bat = self._bat
         if bat is None or self._rate_mw is None:
             return "\u2014"
@@ -446,8 +531,11 @@ class BatteryPopup:
         else:
             remaining_mwh = self._full_mwh * bat.percent / 100
         hours = remaining_mwh / rate_abs
-        secs  = int(hours * 3600)
-        return bat_mod.format_time_long(secs) or "\u2014"
+        time_left = int(hours * 3600)
+        
+        elapsed = self._elapsed_secs if self._elapsed_secs is not None else 0
+        total_est = elapsed + time_left
+        return bat_mod.format_time_long(total_est) or "\u2014"
 
     # ── Graph ──────────────────────────────────────────────────────────────────
 
@@ -620,10 +708,12 @@ class BatteryPopup:
                     end_dt = now_dt + timedelta(seconds=secs_right)
                     d.text((ppx1, lbl_y), bat_mod.fmt_hm(end_dt),
                            font=lfnt, fill=a(self._fg2), anchor="rt")
-                # duration so far
-                if elapsed > 60:
-                    h_, m_ = divmod(int(elapsed), 3600)
-                    dur_str = f"{h_}h {m_//60:02d}m" if h_ else f"{m_//60}m"
+                # estimated runtime instead of just elapsed time
+                total_est = elapsed + (secs_right if secs_right > 0 else 0)
+                if total_est > 60:
+                    h_, rem_ = divmod(int(total_est), 3600)
+                    m_ = rem_ // 60
+                    dur_str = f"{h_}h {m_:02d}m" if h_ else f"{m_}m"
                     d.text(((ppx0 + ppx1) // 2, lbl_y), dur_str,
                            font=lfnt, fill=a(self._fg2), anchor="mt")
             else:
@@ -653,8 +743,8 @@ class BatteryPopup:
         else:
             lbl_txt = ""
         if lbl_txt:
-            d.text((ppx1 - int(2 * s), ppy0 + int(2 * s)),
-                   lbl_txt, font=lfnt2, fill=a(self._acc), anchor="rt")
+            d.text(((ppx0 + ppx1) // 2, ppy0 + int(2 * s)),
+                   lbl_txt, font=lfnt2, fill=a(self._acc), anchor="mt")
 
         # ── Nav arrows ────────────────────────────────────────────────────
         can_left  = (self._graph_index == -1 and bool(self._sessions)) \
@@ -809,7 +899,7 @@ class BatteryPopup:
 
     # ── Apps page ─────────────────────────────────────────────────────────────
 
-    def _render_apps(self, d, px, y, w, s, a, ifnt, nfnt):
+    def _render_apps(self, d, img, px, y, w, s, a, ifnt, nfnt):
         rh      = int(self._RH * s)
         icon_r  = max(8, int(9 * s))
         self._apps_hit_regions = {}
@@ -843,36 +933,65 @@ class BatteryPopup:
                 d.rounded_rectangle([px, y + int(1 * s), w - px, y + rh - int(1 * s)],
                                     radius=int(4 * s), fill=a(self._hov))
 
-            # Colored-initial icon circle
-            col = self._proc_color(name)
+            # Colored-initial icon circle or real app icon
             ix0 = px + int(4 * s)
-            d.ellipse([ix0 - icon_r, my - icon_r, ix0 + icon_r, my + icon_r],
-                      fill=col + (210,))
-            letter  = name[0].upper() if name else "?"
-            lfnt_sm = load_font(max(7, int(8 * s)))
-            d.text((ix0, my), letter, font=lfnt_sm, fill=(255, 255, 255, 255), anchor="mm")
+            icon_img = None
+            exe_path = proc.get("exe")
+            if exe_path:
+                try:
+                    icon_img = get_app_icon(exe_path, size=int(icon_r * 2))
+                except Exception:
+                    pass
+
+            if icon_img:
+                img.paste(icon_img, (ix0 - icon_r, my - icon_r), mask=icon_img.split()[3] if len(icon_img.split()) > 3 else None)
+            else:
+                col = self._proc_color(name)
+                d.ellipse([ix0 - icon_r, my - icon_r, ix0 + icon_r, my + icon_r],
+                          fill=col + (210,))
+                letter  = name[0].upper() if name else "?"
+                lfnt_sm = load_font(max(7, int(8 * s)))
+                d.text((ix0, my), letter, font=lfnt_sm, fill=(255, 255, 255, 255), anchor="mm")
 
             # Kill button (right edge)
             kill_w  = int(22 * s)
             kill_x0 = w - px - kill_w
             kill_x1 = w - px
-            hov_kll = self._hover_key == ("kill", start + idx)
-            d.text(((kill_x0 + kill_x1) // 2, my), self._IC["skull"],
-                   font=ifnt,
-                   fill=a(self._red if hov_kll else (self._icol if hov_row else self._fg2)),
-                   anchor="mm")
-
+            
+            is_self = (pid == os.getpid())
+            if not is_self:
+                cx_kill = (kill_x0 + kill_x1) // 2
+                kill_r  = int(7 * s)
+                hov_kll = self._hover_key == ("kill", start + idx)
+                circle_col = a(self._red if hov_kll else (self._icol if hov_row else self._fg2))
+                
+                # Draw outer circle
+                d.ellipse([cx_kill - kill_r, my - kill_r, cx_kill + kill_r, my + kill_r],
+                          outline=circle_col, width=1)
+                
+                # Draw cross lines inside
+                cross_r = int(3.5 * s)
+                d.line([(cx_kill - cross_r, my - cross_r), (cx_kill + cross_r, my + cross_r)],
+                       fill=circle_col, width=1)
+                d.line([(cx_kill + cross_r, my - cross_r), (cx_kill - cross_r, my + cross_r)],
+                       fill=circle_col, width=1)
+                
+                self._apps_hit_regions[start + idx] = {
+                    "row":  (px, y, kill_x0, y + rh),
+                    "kill": (kill_x0, y, kill_x1, y + rh),
+                    "pid":  pid,
+                }
+            else:
+                self._apps_hit_regions[start + idx] = {
+                    "row":  (px, y, kill_x1, y + rh),
+                    "kill": (0, 0, 0, 0),
+                    "pid":  pid,
+                }
             disp_name = (name[:20] + "…") if len(name) > 21 else name
             d.text((px + int(18 * s), my), disp_name,
                    font=nfnt, fill=a(self._fg), anchor="lm")
             d.text((kill_x0 - int(4 * s), my), w_str,
                    font=nfnt, fill=a(self._fg), anchor="rm")
-
-            self._apps_hit_regions[start + idx] = {
-                "row":  (px, y, kill_x0, y + rh),
-                "kill": (kill_x0, y, kill_x1, y + rh),
-                "pid":  pid,
-            }
             y += rh
 
         # Scroll indicators

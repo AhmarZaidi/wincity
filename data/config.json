@@ -53,15 +53,15 @@
     },
     {
       "id": "screen_on",
-      "visible": true
+      "visible": false
     },
     {
       "id": "cycle_count",
-      "visible": true
+      "visible": false
     },
     {
       "id": "temperature",
-      "visible": true
+      "visible": false
     },
     {
       "id": "battery_estimate",

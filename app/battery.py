@@ -251,10 +251,12 @@ class ProcessTracker:
         self._lock  = threading.Lock()
         # Pre-seed the cpu_percent baselines (first call returns 0.0)
         try:
-            for proc in psutil.process_iter():
+            for proc in psutil.process_iter(attrs=["pid"]):
                 try:
-                    proc.cpu_percent(interval=None)
-                    self._cache[proc.pid] = proc
+                    pid = proc.info["pid"]
+                    p_obj = psutil.Process(pid)
+                    p_obj.cpu_percent(interval=None)
+                    self._cache[pid] = p_obj
                 except Exception:
                     pass
         except Exception:
@@ -271,23 +273,24 @@ class ProcessTracker:
             current_pids: set[int] = set()
 
             try:
-                for proc in psutil.process_iter():
+                for proc in psutil.process_iter(attrs=["pid", "name", "memory_info", "exe"]):
                     try:
-                        pid  = proc.pid
-                        name = proc.name()
+                        info = proc.info
+                        pid  = info["pid"]
+                        name = info["name"] or ""
                         if pid == 0 or name.lower() in ("system idle process", "idle"):
                             continue
                         current_pids.add(pid)
                         if pid not in self._cache:
-                            proc.cpu_percent(interval=None)  # register baseline
-                            self._cache[pid] = proc
+                            p_obj = psutil.Process(pid)
+                            p_obj.cpu_percent(interval=None)  # register baseline
+                            self._cache[pid] = p_obj
                         cpu = self._cache[pid].cpu_percent(interval=None)
-                        try:
-                            mem_mb = self._cache[pid].memory_info().rss / (1024 * 1024)
-                        except Exception:
-                            mem_mb = 0.0
+                        mem_info = info["memory_info"]
+                        mem_mb = mem_info.rss / (1024 * 1024) if mem_info else 0.0
+                        exe_path = info["exe"] or ""
                         processes.append({"pid": pid, "name": name,
-                                          "cpu": cpu, "mem_mb": mem_mb})
+                                          "cpu": cpu, "mem_mb": mem_mb, "exe": exe_path})
                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                         pass
             except Exception:
