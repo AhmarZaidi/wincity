@@ -6,7 +6,7 @@
   "OFFSET_FROM_RIGHT": 130,
   "OFFSET_FROM_TOP": null,
   "UPDATE_INTERVAL": 10,
-  "POPUP_REFRESH_INTERVAL": 2.0,
+  "POPUP_REFRESH_INTERVAL": 1.0,
   "LOW_PCT": 20,
   "VISIBILITY_POLL_MS": 500,
   "CORNER_RADIUS": 8,
@@ -20,6 +20,8 @@
   "POPUP_TITLE_SIZE": 16,
   "POPUP_TEXT_SIZE": 12,
   "POPUP_ICON_SIZE": 16,
+  "GRAPH_HEIGHT": 140,
+  "LOW_CRITICAL_PCT": 10,
   "rows": [
     {
       "id": "status",
@@ -50,20 +52,24 @@
       "visible": true
     },
     {
-      "id": "graph",
+      "id": "screen_on",
       "visible": true
     },
     {
-      "id": "screen_on",
-      "visible": false
-    },
-    {
       "id": "cycle_count",
-      "visible": false
+      "visible": true
     },
     {
       "id": "temperature",
-      "visible": false
+      "visible": true
+    },
+    {
+      "id": "battery_estimate",
+      "visible": true
+    },
+    {
+      "id": "graph",
+      "visible": true
     }
   ],
   "colors": {

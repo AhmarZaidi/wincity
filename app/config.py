@@ -38,6 +38,8 @@ POPUP_CORNER_RADIUS  = 12
 POPUP_TITLE_SIZE     = 16
 POPUP_TEXT_SIZE      = 12
 POPUP_ICON_SIZE      = 16
+GRAPH_HEIGHT         = 140   # graph block height in logical px
+LOW_CRITICAL_PCT     = 10    # below this % → red graph line (critical)
 
 _DEFAULT_CONFIG = {
     "WIDGET_WIDTH": 55, "WIDGET_HEIGHT": 25, "OFFSET_FROM_RIGHT": 130,
@@ -57,10 +59,11 @@ _DEFAULT_CONFIG = {
         {"id": "time",        "visible": True},
         {"id": "rate",        "visible": True},
         {"id": "elapsed",     "visible": True},
-        {"id": "graph",       "visible": True},
-        {"id": "screen_on",   "visible": False},
-        {"id": "cycle_count", "visible": False},
-        {"id": "temperature", "visible": False},
+        {"id": "graph",            "visible": True},
+        {"id": "screen_on",        "visible": False},
+        {"id": "cycle_count",      "visible": False},
+        {"id": "temperature",      "visible": False},
+        {"id": "battery_estimate", "visible": False},
     ],
     # Theme colors — '#rrggbb' (RGB) or '#rrggbbaa' (RGBA, last 2 digits = alpha).
     "colors": {
@@ -125,6 +128,7 @@ def load_config():
     global UPDATE_INTERVAL, POPUP_REFRESH_INTERVAL, LOW_PCT, VISIBILITY_POLL_MS
     global CORNER_RADIUS, FILL_PADDING, FILL_RIGHT_EXTEND, FONT_SIZE, RENDER_SCALE, OUTLINE_WIDTH
     global POPUP_Y_OFFSET, POPUP_CORNER_RADIUS, POPUP_TITLE_SIZE, POPUP_TEXT_SIZE, POPUP_ICON_SIZE
+    global GRAPH_HEIGHT, LOW_CRITICAL_PCT
     global ROWS_CONFIG, COLORS_DARK, COLORS_LIGHT, COLORS_GRAPH, COLORS_WIDGET
 
     _DATA_DIR.mkdir(exist_ok=True)
@@ -173,6 +177,8 @@ def load_config():
     POPUP_TITLE_SIZE     = _gi("POPUP_TITLE_SIZE",     POPUP_TITLE_SIZE)
     POPUP_TEXT_SIZE      = _gi("POPUP_TEXT_SIZE",      POPUP_TEXT_SIZE)
     POPUP_ICON_SIZE      = _gi("POPUP_ICON_SIZE",      POPUP_ICON_SIZE)
+    GRAPH_HEIGHT         = _gi("GRAPH_HEIGHT",         GRAPH_HEIGHT)
+    LOW_CRITICAL_PCT     = _gi("LOW_CRITICAL_PCT",     LOW_CRITICAL_PCT)
 
     rows = cfg.get("rows")
     if isinstance(rows, list):
@@ -217,6 +223,8 @@ def save_config():
         existing["POPUP_TITLE_SIZE"]     = POPUP_TITLE_SIZE
         existing["POPUP_TEXT_SIZE"]      = POPUP_TEXT_SIZE
         existing["POPUP_ICON_SIZE"]      = POPUP_ICON_SIZE
+        existing["GRAPH_HEIGHT"]         = GRAPH_HEIGHT
+        existing["LOW_CRITICAL_PCT"]     = LOW_CRITICAL_PCT
         existing["rows"]                 = ROWS_CONFIG
 
         tmp = _CONFIG_FILE.with_suffix(".tmp")

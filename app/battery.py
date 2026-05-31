@@ -178,8 +178,8 @@ def query_battery_hw():
                         if binfo.DesignedCapacity > 0:
                             designed_mwh = int(binfo.DesignedCapacity)
                             full_mwh     = int(binfo.FullChargedCapacity)
-                        if binfo.ReservedCapacity > 0:
-                            cycle_count  = int(binfo.ReservedCapacity)
+                        if binfo.CycleCount > 0:          # CycleCount is the correct field
+                            cycle_count  = int(binfo.CycleCount)
 
                     qtemp = _BAT_QUERY_INFO(BatteryTag=tag.value, InformationLevel=2, AtRate=0)
                     t_raw = ctypes.c_ulong(0)
@@ -311,6 +311,17 @@ class ProcessTracker:
 
             processes.sort(key=lambda x: x["watts"], reverse=True)
             return processes
+
+
+def get_screen_on_seconds() -> int | None:
+    """
+    Return system uptime in seconds as a proxy for screen-on time.
+    Uses GetTickCount64 (ms since last boot).
+    """
+    try:
+        return int(ctypes.windll.kernel32.GetTickCount64() / 1000)
+    except Exception:
+        return None
 
 
 def get_total_watts(rate_mw=None) -> float:
