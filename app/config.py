@@ -17,32 +17,36 @@ _CONFIG_FILE = _DATA_DIR / "config.json"
 _STATE_FILE  = _DATA_DIR / "state.json"
 
 # ── Runtime constants (overwritten by load_config) ────────────────────────────
-WIDGET_WIDTH       = 55
-WIDGET_HEIGHT      = 25
-OFFSET_FROM_RIGHT  = 130
-OFFSET_FROM_TOP    = None
-UPDATE_INTERVAL    = 10
-LOW_PCT            = 10
-CORNER_RADIUS      = 8
-FILL_PADDING       = 0
-FILL_RIGHT_EXTEND  = 0
-FONT_SIZE          = 22
-RENDER_SCALE       = 8
-OUTLINE_WIDTH      = 1
-VISIBILITY_POLL_MS = 500
-POPUP_Y_OFFSET      = 20
-POPUP_CORNER_RADIUS = 12
-POPUP_TITLE_SIZE    = 16
-POPUP_TEXT_SIZE     = 12
-POPUP_ICON_SIZE     = 16
+WIDGET_WIDTH         = 55
+WIDGET_HEIGHT        = 25
+WIDGET_X             = None   # None = auto-place on taskbar
+WIDGET_Y             = None   # None = auto-place on taskbar
+OFFSET_FROM_RIGHT    = 130
+OFFSET_FROM_TOP      = None
+UPDATE_INTERVAL      = 10
+POPUP_REFRESH_INTERVAL = 2    # seconds — how often the open popup refreshes live data
+LOW_PCT              = 10
+CORNER_RADIUS        = 8
+FILL_PADDING         = 0
+FILL_RIGHT_EXTEND    = 0
+FONT_SIZE            = 22
+RENDER_SCALE         = 8
+OUTLINE_WIDTH        = 1
+VISIBILITY_POLL_MS   = 500
+POPUP_Y_OFFSET       = 20
+POPUP_CORNER_RADIUS  = 12
+POPUP_TITLE_SIZE     = 16
+POPUP_TEXT_SIZE      = 12
+POPUP_ICON_SIZE      = 16
 
 _DEFAULT_CONFIG = {
     "WIDGET_WIDTH": 55, "WIDGET_HEIGHT": 25, "OFFSET_FROM_RIGHT": 130,
-    "OFFSET_FROM_TOP": None, "UPDATE_INTERVAL": 10, "LOW_PCT": 10,
-    "VISIBILITY_POLL_MS": 500, "CORNER_RADIUS": 8, "FILL_PADDING": 0,
+    "OFFSET_FROM_TOP": None, "UPDATE_INTERVAL": 10, "POPUP_REFRESH_INTERVAL": 2,
+    "LOW_PCT": 10, "VISIBILITY_POLL_MS": 500, "CORNER_RADIUS": 8, "FILL_PADDING": 0,
     "FILL_RIGHT_EXTEND": 0, "FONT_SIZE": 22, "RENDER_SCALE": 8,
     "OUTLINE_WIDTH": 1, "POPUP_Y_OFFSET": 20, "POPUP_CORNER_RADIUS": 12,
     "POPUP_TITLE_SIZE": 16, "POPUP_TEXT_SIZE": 12, "POPUP_ICON_SIZE": 16,
+    "WIDGET_X": None, "WIDGET_Y": None,
     # Popup rows — order = display order; set "visible": false to hide.
     # The "graph" entry controls where the history chart is injected.
     "rows": [
@@ -116,8 +120,9 @@ COLORS_WIDGET = _colors_to_tuples(_DEFAULT_CONFIG["colors"]["widget"])
 
 def load_config():
     """Read data/config.json; create with defaults if missing. Updates module globals."""
-    global WIDGET_WIDTH, WIDGET_HEIGHT, OFFSET_FROM_RIGHT, OFFSET_FROM_TOP
-    global UPDATE_INTERVAL, LOW_PCT, VISIBILITY_POLL_MS
+    global WIDGET_WIDTH, WIDGET_HEIGHT, WIDGET_X, WIDGET_Y
+    global OFFSET_FROM_RIGHT, OFFSET_FROM_TOP
+    global UPDATE_INTERVAL, POPUP_REFRESH_INTERVAL, LOW_PCT, VISIBILITY_POLL_MS
     global CORNER_RADIUS, FILL_PADDING, FILL_RIGHT_EXTEND, FONT_SIZE, RENDER_SCALE, OUTLINE_WIDTH
     global POPUP_Y_OFFSET, POPUP_CORNER_RADIUS, POPUP_TITLE_SIZE, POPUP_TEXT_SIZE, POPUP_ICON_SIZE
     global ROWS_CONFIG, COLORS_DARK, COLORS_LIGHT, COLORS_GRAPH, COLORS_WIDGET
@@ -139,26 +144,35 @@ def load_config():
         v = cfg.get(key)
         return int(v) if v is not None else default
 
-    WIDGET_WIDTH        = _gi("WIDGET_WIDTH",        WIDGET_WIDTH)
-    wh                  = cfg.get("WIDGET_HEIGHT")
-    WIDGET_HEIGHT       = int(wh) if wh is not None else None
-    OFFSET_FROM_RIGHT   = _gi("OFFSET_FROM_RIGHT",   OFFSET_FROM_RIGHT)
-    ot                  = cfg.get("OFFSET_FROM_TOP")
-    OFFSET_FROM_TOP     = int(ot) if ot is not None else None
-    UPDATE_INTERVAL     = _gi("UPDATE_INTERVAL",     UPDATE_INTERVAL)
-    LOW_PCT             = _gi("LOW_PCT",             LOW_PCT)
-    VISIBILITY_POLL_MS  = _gi("VISIBILITY_POLL_MS",  VISIBILITY_POLL_MS)
-    CORNER_RADIUS       = _gi("CORNER_RADIUS",       CORNER_RADIUS)
-    FILL_PADDING        = _gi("FILL_PADDING",        FILL_PADDING)
-    FILL_RIGHT_EXTEND   = _gi("FILL_RIGHT_EXTEND",   FILL_RIGHT_EXTEND)
-    FONT_SIZE           = _gi("FONT_SIZE",           FONT_SIZE)
-    RENDER_SCALE        = _gi("RENDER_SCALE",        RENDER_SCALE)
-    OUTLINE_WIDTH       = _gi("OUTLINE_WIDTH",       OUTLINE_WIDTH)
-    POPUP_Y_OFFSET      = _gi("POPUP_Y_OFFSET",      POPUP_Y_OFFSET)
-    POPUP_CORNER_RADIUS = _gi("POPUP_CORNER_RADIUS", POPUP_CORNER_RADIUS)
-    POPUP_TITLE_SIZE    = _gi("POPUP_TITLE_SIZE",    POPUP_TITLE_SIZE)
-    POPUP_TEXT_SIZE     = _gi("POPUP_TEXT_SIZE",     POPUP_TEXT_SIZE)
-    POPUP_ICON_SIZE     = _gi("POPUP_ICON_SIZE",     POPUP_ICON_SIZE)
+    def _gf(key, default):
+        v = cfg.get(key)
+        return float(v) if v is not None else default
+
+    WIDGET_WIDTH         = _gi("WIDGET_WIDTH",         WIDGET_WIDTH)
+    wh                   = cfg.get("WIDGET_HEIGHT")
+    WIDGET_HEIGHT        = int(wh) if wh is not None else None
+    wx_                  = cfg.get("WIDGET_X")
+    WIDGET_X             = int(wx_) if wx_ is not None else None
+    wy_                  = cfg.get("WIDGET_Y")
+    WIDGET_Y             = int(wy_) if wy_ is not None else None
+    OFFSET_FROM_RIGHT    = _gi("OFFSET_FROM_RIGHT",    OFFSET_FROM_RIGHT)
+    ot                   = cfg.get("OFFSET_FROM_TOP")
+    OFFSET_FROM_TOP      = int(ot) if ot is not None else None
+    UPDATE_INTERVAL      = _gi("UPDATE_INTERVAL",      UPDATE_INTERVAL)
+    POPUP_REFRESH_INTERVAL = _gf("POPUP_REFRESH_INTERVAL", POPUP_REFRESH_INTERVAL)
+    LOW_PCT              = _gi("LOW_PCT",              LOW_PCT)
+    VISIBILITY_POLL_MS   = _gi("VISIBILITY_POLL_MS",   VISIBILITY_POLL_MS)
+    CORNER_RADIUS        = _gi("CORNER_RADIUS",        CORNER_RADIUS)
+    FILL_PADDING         = _gi("FILL_PADDING",         FILL_PADDING)
+    FILL_RIGHT_EXTEND    = _gi("FILL_RIGHT_EXTEND",    FILL_RIGHT_EXTEND)
+    FONT_SIZE            = _gi("FONT_SIZE",            FONT_SIZE)
+    RENDER_SCALE         = _gi("RENDER_SCALE",         RENDER_SCALE)
+    OUTLINE_WIDTH        = _gi("OUTLINE_WIDTH",        OUTLINE_WIDTH)
+    POPUP_Y_OFFSET       = _gi("POPUP_Y_OFFSET",       POPUP_Y_OFFSET)
+    POPUP_CORNER_RADIUS  = _gi("POPUP_CORNER_RADIUS",  POPUP_CORNER_RADIUS)
+    POPUP_TITLE_SIZE     = _gi("POPUP_TITLE_SIZE",     POPUP_TITLE_SIZE)
+    POPUP_TEXT_SIZE      = _gi("POPUP_TEXT_SIZE",      POPUP_TEXT_SIZE)
+    POPUP_ICON_SIZE      = _gi("POPUP_ICON_SIZE",      POPUP_ICON_SIZE)
 
     rows = cfg.get("rows")
     if isinstance(rows, list):
@@ -170,6 +184,46 @@ def load_config():
         if "light"  in colors: COLORS_LIGHT  = _colors_to_tuples(colors["light"])
         if "graph"  in colors: COLORS_GRAPH  = _colors_to_tuples(colors["graph"])
         if "widget" in colors: COLORS_WIDGET = _colors_to_tuples(colors["widget"])
+
+
+def save_config():
+    """Write current runtime globals back to data/config.json atomically."""
+    try:
+        _DATA_DIR.mkdir(exist_ok=True)
+        # Re-load current file to preserve colors and other untouched keys
+        try:
+            existing = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            existing = dict(_DEFAULT_CONFIG)
+
+        existing["WIDGET_WIDTH"]          = WIDGET_WIDTH
+        existing["WIDGET_HEIGHT"]         = WIDGET_HEIGHT
+        existing["WIDGET_X"]             = WIDGET_X
+        existing["WIDGET_Y"]             = WIDGET_Y
+        existing["OFFSET_FROM_RIGHT"]    = OFFSET_FROM_RIGHT
+        existing["OFFSET_FROM_TOP"]      = OFFSET_FROM_TOP
+        existing["UPDATE_INTERVAL"]      = UPDATE_INTERVAL
+        existing["POPUP_REFRESH_INTERVAL"] = POPUP_REFRESH_INTERVAL
+        existing["LOW_PCT"]              = LOW_PCT
+        existing["VISIBILITY_POLL_MS"]   = VISIBILITY_POLL_MS
+        existing["CORNER_RADIUS"]        = CORNER_RADIUS
+        existing["FILL_PADDING"]         = FILL_PADDING
+        existing["FILL_RIGHT_EXTEND"]    = FILL_RIGHT_EXTEND
+        existing["FONT_SIZE"]            = FONT_SIZE
+        existing["RENDER_SCALE"]         = RENDER_SCALE
+        existing["OUTLINE_WIDTH"]        = OUTLINE_WIDTH
+        existing["POPUP_Y_OFFSET"]       = POPUP_Y_OFFSET
+        existing["POPUP_CORNER_RADIUS"]  = POPUP_CORNER_RADIUS
+        existing["POPUP_TITLE_SIZE"]     = POPUP_TITLE_SIZE
+        existing["POPUP_TEXT_SIZE"]      = POPUP_TEXT_SIZE
+        existing["POPUP_ICON_SIZE"]      = POPUP_ICON_SIZE
+        existing["rows"]                 = ROWS_CONFIG
+
+        tmp = _CONFIG_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        tmp.replace(_CONFIG_FILE)
+    except Exception:
+        pass
 
 
 # ── State I/O ────────────────────────────────────────────────────────────────
