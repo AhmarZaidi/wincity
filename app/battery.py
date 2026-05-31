@@ -1,13 +1,18 @@
 """
 Battery data queries (psutil + Win32 IOCTL) and display formatters.
+Also provides ProcessTracker for per-process wattage attribution.
 """
 import ctypes
 import ctypes.wintypes
+import json
 import subprocess
 import time
+import threading
 
 import psutil
 
+
+# ── Basic battery queries ────────────────────────────────────────────────────
 
 def get_battery():
     try:
@@ -173,8 +178,8 @@ def query_battery_hw():
                         if binfo.DesignedCapacity > 0:
                             designed_mwh = int(binfo.DesignedCapacity)
                             full_mwh     = int(binfo.FullChargedCapacity)
-                        if binfo.ReservedCapacity > 0:
-                            cycle_count  = int(binfo.ReservedCapacity)
+                        if binfo.CycleCount > 0:          # CycleCount is the correct field
+                            cycle_count  = int(binfo.CycleCount)
 
                     qtemp = _BAT_QUERY_INFO(BatteryTag=tag.value, InformationLevel=2, AtRate=0)
                     t_raw = ctypes.c_ulong(0)
@@ -225,3 +230,143 @@ def _query_temp_wmi():
     _wmi_temp_cache["val"] = val
     _wmi_temp_cache["ts"]  = now
     return val
+
+
+# ── Per-process wattage tracking ─────────────────────────────────────────────
+
+class ProcessTracker:
+    """
+    Tracks per-process CPU/RAM footprints and attributes wattage proportionally
+    to the total system discharge rate (from IOCTL or WMI fallback).
+
+    Usage:
+        tracker = ProcessTracker()
+        # Call update() periodically (e.g. every 2 s):
+        result = tracker.update(total_watts)
+        # result is a list of dicts: [{"name", "pid", "cpu", "mem_mb", "watts"}, ...]
+    """
+
+    def __init__(self):
+        self._cache: dict[int, psutil.Process] = {}
+        self._lock  = threading.Lock()
+        # Pre-seed the cpu_percent baselines (first call returns 0.0)
+        try:
+            for proc in psutil.process_iter(attrs=["pid"]):
+                try:
+                    pid = proc.info["pid"]
+                    p_obj = psutil.Process(pid)
+                    p_obj.cpu_percent(interval=None)
+                    self._cache[pid] = p_obj
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def update(self, total_watts: float) -> list:
+        """
+        Compute per-process wattage.
+        total_watts should be the measured (or estimated) system discharge rate in Watts.
+        Returns a list sorted by watts descending.
+        """
+        with self._lock:
+            processes = []
+            current_pids: set[int] = set()
+
+            try:
+                for proc in psutil.process_iter(attrs=["pid", "name", "memory_info", "exe"]):
+                    try:
+                        info = proc.info
+                        pid  = info["pid"]
+                        name = info["name"] or ""
+                        if pid == 0 or name.lower() in ("system idle process", "idle"):
+                            continue
+                        current_pids.add(pid)
+                        if pid not in self._cache:
+                            p_obj = psutil.Process(pid)
+                            p_obj.cpu_percent(interval=None)  # register baseline
+                            self._cache[pid] = p_obj
+                        cpu = self._cache[pid].cpu_percent(interval=None)
+                        mem_info = info["memory_info"]
+                        mem_mb = mem_info.rss / (1024 * 1024) if mem_info else 0.0
+                        exe_path = info["exe"] or ""
+                        processes.append({"pid": pid, "name": name,
+                                          "cpu": cpu, "mem_mb": mem_mb, "exe": exe_path})
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        pass
+            except Exception:
+                pass
+
+            # Prune stale pids
+            self._cache = {p: v for p, v in self._cache.items() if p in current_pids}
+
+            if not processes:
+                return []
+
+            # Hybrid weight: CPU dominates, memory provides minor background load
+            total_weight = 0.0
+            for proc in processes:
+                proc["weight"] = proc["cpu"] + (proc["mem_mb"] / 1024.0) * 0.05 + 0.001
+                total_weight += proc["weight"]
+
+            for proc in processes:
+                share = proc["weight"] / total_weight if total_weight > 0 else 0.0
+                proc["watts"] = total_watts * share
+
+            processes.sort(key=lambda x: x["watts"], reverse=True)
+            return processes
+
+
+def get_screen_on_seconds() -> int | None:
+    """
+    Return system uptime in seconds as a proxy for screen-on time.
+    Uses GetTickCount64 (ms since last boot).
+    """
+    try:
+        return int(ctypes.windll.kernel32.GetTickCount64() / 1000)
+    except Exception:
+        return None
+
+
+def get_total_watts(rate_mw=None) -> float:
+    """
+    Best-effort system power draw in Watts.
+    Prefers the IOCTL rate_mw; falls back to a WMI/CPU-based estimate.
+    """
+    if rate_mw is not None:
+        w = abs(rate_mw) / 1000.0
+        if w > 0.1:
+            return w
+
+    # WMI fallback (from battery_tracker approach)
+    try:
+        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+               "Get-CimInstance -Namespace root/wmi -ClassName BatteryStatus | "
+               "Select-Object -Property DischargeRate, Discharging, Voltage | ConvertTo-Json"]
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                timeout=2, creationflags=0x08000000)
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            discharge_rate = data.get("DischargeRate", 0)
+            if data.get("Discharging") and discharge_rate > 0:
+                return discharge_rate / 1000.0
+    except Exception:
+        pass
+
+    # Dynamic CPU-based fallback
+    try:
+        cpu = psutil.cpu_percent(interval=None)
+    except Exception:
+        cpu = 30.0
+    return round(12.5 + cpu * 0.18, 2)
+
+
+def kill_process(pid: int) -> bool:
+    """Attempt to terminate a process by PID. Returns True on success."""
+    try:
+        proc = psutil.Process(pid)
+        proc.kill()
+        return True
+    except Exception:
+        return False

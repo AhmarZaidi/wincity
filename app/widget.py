@@ -17,6 +17,10 @@ from .render import render_battery
 from .popup import BatteryPopup
 
 
+# Maximum number of historical sessions to keep in memory + state
+_MAX_SESSIONS = 20
+
+
 class BatteryWidget:
 
     @staticmethod
@@ -61,11 +65,17 @@ class BatteryWidget:
         self._last_cycle_count  = None
         self._last_temp_c       = None
         self._history           = collections.deque(maxlen=720)
+        self._sessions: list    = []       # completed charge/discharge sessions
         self._discharge_start   = None
         self._charge_start      = None
         self._prev_plugged      = None
         self._last_elapsed_secs = None
         self._save_counter      = 0
+
+        # Drag state
+        self._dragging      = False
+        self._drag_offset_x = 0
+        self._drag_offset_y = 0
 
         # ── Restore persisted state ────────────────────────────────────────
         state     = config.load_state()
@@ -81,6 +91,10 @@ class BatteryWidget:
                 if t_ep >= cutoff:
                     self._history.append(
                         (now_mono - (now_epoch - t_ep), float(pct), bool(pl)))
+
+        # Restore completed sessions (up to _MAX_SESSIONS)
+        for sess in state.get("sessions", [])[-_MAX_SESSIONS:]:
+            self._sessions.append(sess)
 
         dse = state.get("discharge_start_epoch")
         if dse is not None:
@@ -139,10 +153,15 @@ class BatteryWidget:
 
         threading.Thread(target=self._bg_updater, daemon=True).start()
         self.root.after(config.VISIBILITY_POLL_MS, self._poll_taskbar_visibility)
+        self.root.after(int(config.POPUP_REFRESH_INTERVAL * 1000), self._popup_refresh_tick)
 
     # ── Positioning ────────────────────────────────────────────────────────────
 
     def _place(self, tb, tb_h):
+        # Use saved absolute position if available (set by drag-to-move)
+        if config.WIDGET_X is not None and config.WIDGET_Y is not None:
+            self.root.geometry(f"{self.W}x{self.H}+{config.WIDGET_X}+{config.WIDGET_Y}")
+            return
         x = tb.right - self.W - config.OFFSET_FROM_RIGHT
         if config.OFFSET_FROM_TOP is None:
             y = tb.top + (tb_h - self.H) // 2
@@ -218,13 +237,15 @@ class BatteryWidget:
                 else:
                     self._discharge_start = time.monotonic()
             elif self._prev_plugged and not plugged:
-                # Charger disconnected — reset timer and graph
+                # Charger disconnected — save current charging session, start discharge
+                self._save_session("charging")
                 self._history.clear()
                 self._discharge_start = time.monotonic()
                 self._charge_start    = None
                 self._persist_state()
             elif not self._prev_plugged and plugged:
-                # Charger connected — reset timer and graph
+                # Charger connected — save current discharge session, start charging
+                self._save_session("discharging")
                 self._history.clear()
                 self._charge_start    = time.monotonic()
                 self._discharge_start = None
@@ -252,6 +273,27 @@ class BatteryWidget:
             self._save_counter = 0
             self._persist_state()
 
+    def _save_session(self, session_type: str):
+        """Snapshot the current history as a completed session and append to self._sessions."""
+        if not self._history:
+            return
+        now_mono  = time.monotonic()
+        now_epoch = time.time()
+        pts = []
+        for t, pct, pl in self._history:
+            epoch_t = now_epoch - (now_mono - t)
+            pts.append([round(epoch_t, 1), round(pct, 1), int(pl)])
+        if pts:
+            self._sessions.append({
+                "type":    session_type,
+                "start":   pts[0][0],
+                "end":     pts[-1][0],
+                "points":  pts,
+            })
+            # Trim to max sessions
+            if len(self._sessions) > _MAX_SESSIONS:
+                self._sessions = self._sessions[-_MAX_SESSIONS:]
+
     def _persist_state(self):
         now_mono  = time.monotonic()
         now_epoch = time.time()
@@ -271,6 +313,7 @@ class BatteryWidget:
             "charge_start_epoch":    cse,
             "show_percent":          self._show_percent,
             "history":               history_out,
+            "sessions":              self._sessions,
         })
 
     def _toggle_display(self, _event=None):
@@ -289,6 +332,25 @@ class BatteryWidget:
             except Exception:
                 pass
             self.root.after(0, self._update_ui)
+
+    # ── Live popup refresh ─────────────────────────────────────────────────────
+
+    def _popup_refresh_tick(self):
+        """Called every POPUP_REFRESH_INTERVAL; pushes fresh telemetry into open popup."""
+        if self._popup is not None:
+            try:
+                self._popup.push_update(
+                    self._last_bat, self._last_label, self._last_secs,
+                    self._last_rate_mw, self._last_designed_mwh, self._last_full_mwh,
+                    self._last_cycle_count, self._last_temp_c,
+                    self._last_elapsed_secs,
+                    list(self._history),
+                    self._sessions,
+                )
+            except Exception:
+                pass
+        interval_ms = max(500, int(config.POPUP_REFRESH_INTERVAL * 1000))
+        self.root.after(interval_ms, self._popup_refresh_tick)
 
     # ── Taskbar visibility tracking ────────────────────────────────────────────
 
@@ -317,30 +379,51 @@ class BatteryWidget:
             self._last_cycle_count, self._last_temp_c,
             self._last_elapsed_secs,
             list(self._history),
+            self._sessions,
             quit_cb=self._quit,
             close_cb=self._close_popup,
+            move_cb=self._start_drag_mode,
+            settings_saved_cb=self._on_settings_saved,
         )
         self._watch_popup()
 
     def _watch_popup(self):
         if self._popup is None:
             return
-        px, py = self.root.winfo_pointerx(), self.root.winfo_pointery()
 
-        wx, wy = self.root.winfo_x(), self.root.winfo_y()
-        if wx <= px < wx + self.W and wy <= py < wy + self.H:
-            self.root.after(150, self._watch_popup)
-            return
-
+        # If the popup is on a page other than dashboard, never auto-close
         try:
-            popup_win = self._popup.win
-            pox = popup_win.winfo_x();  poy = popup_win.winfo_y()
-            pw_ = popup_win.winfo_width(); ph_ = popup_win.winfo_height()
-            if pox <= px < pox + pw_ and poy <= py < poy + ph_:
-                self.root.after(150, self._watch_popup)
+            if self._popup.page != "dashboard":
+                self.root.after(200, self._watch_popup)
                 return
         except Exception:
             pass
+
+        px, py = self.root.winfo_pointerx(), self.root.winfo_pointery()
+
+        wx  = self.root.winfo_x()
+        wy  = self.root.winfo_y()
+
+        # Compute the bounding box of popup window
+        try:
+            popup_win = self._popup.win
+            pox = popup_win.winfo_x()
+            poy = popup_win.winfo_y()
+            pw_ = popup_win.winfo_width()
+            ph_ = popup_win.winfo_height()
+        except Exception:
+            self._close_popup()
+            return
+
+        # Active zone: union of widget rect, popup rect, and the gap between them
+        zone_x0 = min(wx, pox)
+        zone_x1 = max(wx + self.W, pox + pw_)
+        zone_y0 = min(wy, poy)
+        zone_y1 = max(wy + self.H, poy + ph_)
+
+        if zone_x0 <= px < zone_x1 and zone_y0 <= py < zone_y1:
+            self.root.after(150, self._watch_popup)
+            return
 
         self._close_popup()
 
@@ -348,6 +431,56 @@ class BatteryWidget:
         if self._popup:
             self._popup.destroy()
             self._popup = None
+
+    # ── Drag-to-move ──────────────────────────────────────────────────────────
+
+    def _start_drag_mode(self):
+        """Called by popup settings 'Move' button. Enters drag mode."""
+        self._close_popup()
+        self.canvas.config(cursor="fleur")
+        self.canvas.bind("<ButtonPress-1>",   self._drag_start)
+        self.canvas.bind("<B1-Motion>",        self._drag_motion)
+        self.canvas.bind("<ButtonRelease-1>",  self._drag_stop)
+
+    def _drag_start(self, event):
+        self._dragging      = True
+        self._drag_offset_x = event.x_root - self.root.winfo_x()
+        self._drag_offset_y = event.y_root - self.root.winfo_y()
+
+    def _drag_motion(self, event):
+        if not self._dragging:
+            return
+        new_x = event.x_root - self._drag_offset_x
+        new_y = event.y_root - self._drag_offset_y
+        self.root.geometry(f"{self.W}x{self.H}+{new_x}+{new_y}")
+
+    def _drag_stop(self, event):
+        self._dragging = False
+        # Persist absolute position
+        config.WIDGET_X = self.root.winfo_x()
+        config.WIDGET_Y = self.root.winfo_y()
+        config.save_config()
+        # Restore normal bindings
+        self.canvas.config(cursor="")
+        self.canvas.bind("<ButtonPress-1>",   "")
+        self.canvas.bind("<B1-Motion>",        "")
+        self.canvas.bind("<ButtonRelease-1>",  "")
+        self.canvas.bind("<Button-1>",  self._toggle_display)
+
+    # ── Settings saved callback ─────────────────────────────────────────────
+
+    def _on_settings_saved(self):
+        """Called when the settings page saves changes; redraws the widget."""
+        # Rebuild widget size from updated config
+        scale = system.dpi_scale()
+        tb    = system.get_taskbar_rect()
+        tb_h  = tb.bottom - tb.top
+        self.H = int((config.WIDGET_HEIGHT if config.WIDGET_HEIGHT is not None
+                      else max(28, tb_h - 8)) * scale)
+        self.W = int(config.WIDGET_WIDTH * scale)
+        self.canvas.config(width=self.W, height=self.H)
+        self._place(tb, tb_h)
+        self._update_ui()
 
     # ── Menu / quit ────────────────────────────────────────────────────────────
 
