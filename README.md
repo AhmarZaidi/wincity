@@ -61,7 +61,7 @@ Pre-requisite: Go to Settings (Win + I) > System > Power & Battery > Turn on Bat
 
 ### Download and run the released .exe:
 
-Download the latest release from the [Releases](https://github.com/AhmarZaidi/wincity/releases/tag/v1.0.0) page, and run `WinCity.exe`.
+Download the latest release from the [Releases page](https://github.com/AhmarZaidi/wincity/releases), and run `WinCity.exe`.
 
 OR
 
