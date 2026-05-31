@@ -402,7 +402,7 @@ class BatteryPopup:
 
         # ── Title bar ─────────────────────────────────────────────────────
         page_titles = {
-            "dashboard":  ("WinCity",            "v1.0.0"),
+            "dashboard":  ("WinCity",            "v1.1.0"),
             "settings":   ("Settings",            None),
             "rows_config":("Customize Rows",      None),
             "apps":       ("App Battery Usage",   None),
@@ -1044,7 +1044,7 @@ class BatteryPopup:
         d.text((cx, y + rh // 2), "WinCity Battery Monitor",
                font=nfnt, fill=a(self._fg), anchor="mm")
         y += rh
-        d.text((cx, y + int(9 * s)), "v1.0.0",
+        d.text((cx, y + int(9 * s)), "v1.1.0",
                font=sfnt, fill=a(self._fg2), anchor="mm")
         y += rh // 2 + int(4 * s)
 
