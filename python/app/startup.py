@@ -118,7 +118,35 @@ def is_autostart_enabled() -> bool:
     return get_startup_shortcut_path().exists()
 
 
-def set_autostart(enable: bool) -> bool:
+def _find_main_py() -> pathlib.Path:
+    base_dir = config._BASE_DIR.resolve()
+    cand1 = base_dir / "python" / "main.py"
+    if cand1.exists():
+        return cand1
+    cand2 = base_dir / "main.py"
+    if cand2.exists():
+        return cand2
+    return cand1
+
+
+def get_target_command(variant: str = "auto") -> tuple[str, str]:
+    """
+    Get (target_path, arguments) for launching WinCity.
+    variant can be 'rust', 'python', or 'auto' (prefers rust if built).
+    """
+    base_dir = config._BASE_DIR.resolve()
+    rust_exe = base_dir / "rust" / "target" / "release" / "wincity.exe"
+
+    if variant == "rust" or (variant == "auto" and rust_exe.exists()):
+        if rust_exe.exists():
+            return str(rust_exe), ""
+
+    main_py = _find_main_py().resolve()
+    pythonw = get_pythonw_path()
+    return pythonw, f'"{main_py}"'
+
+
+def set_autostart(enable: bool, variant: str = "auto") -> bool:
     """
     Enable or disable auto-starting WinCity at Windows login.
     Creates or removes WinCity.lnk in shell:startup.
@@ -126,13 +154,12 @@ def set_autostart(enable: bool) -> bool:
     lnk = get_startup_shortcut_path()
     if enable:
         base_dir = config._BASE_DIR.resolve()
-        main_py = (base_dir / "main.py").resolve()
         icon = (base_dir / "assets" / "appicon.ico").resolve()
-        pythonw = get_pythonw_path()
+        target, args = get_target_command(variant)
         return create_shortcut(
-            target=pythonw,
+            target=target,
             shortcut_path=lnk,
-            args=f'"{main_py}"',
+            args=args,
             working_dir=str(base_dir),
             icon_path=f"{icon},0" if icon.exists() else "",
             description="WinCity Taskbar Battery Indicator",
@@ -146,18 +173,17 @@ def set_autostart(enable: bool) -> bool:
             return False
 
 
-def create_project_shortcut() -> pathlib.Path | None:
+def create_project_shortcut(variant: str = "auto") -> pathlib.Path | None:
     """Create WinCity.lnk in the root project directory with the app icon."""
     base_dir = config._BASE_DIR.resolve()
-    main_py = (base_dir / "main.py").resolve()
     icon = (base_dir / "assets" / "appicon.ico").resolve()
     lnk = base_dir / "WinCity.lnk"
-    pythonw = get_pythonw_path()
+    target, args = get_target_command(variant)
 
     ok = create_shortcut(
-        target=pythonw,
+        target=target,
         shortcut_path=lnk,
-        args=f'"{main_py}"',
+        args=args,
         working_dir=str(base_dir),
         icon_path=f"{icon},0" if icon.exists() else "",
         description="WinCity Taskbar Battery Indicator",
@@ -165,7 +191,7 @@ def create_project_shortcut() -> pathlib.Path | None:
     return lnk if ok else None
 
 
-def create_desktop_shortcut() -> pathlib.Path | None:
+def create_desktop_shortcut(variant: str = "auto") -> pathlib.Path | None:
     """Create WinCity.lnk on the user's Desktop with the app icon."""
     user_home = pathlib.Path.home()
     desktop = user_home / "Desktop"
@@ -173,17 +199,17 @@ def create_desktop_shortcut() -> pathlib.Path | None:
         return None
 
     base_dir = config._BASE_DIR.resolve()
-    main_py = (base_dir / "main.py").resolve()
     icon = (base_dir / "assets" / "appicon.ico").resolve()
     lnk = desktop / "WinCity.lnk"
-    pythonw = get_pythonw_path()
+    target, args = get_target_command(variant)
 
     ok = create_shortcut(
-        target=pythonw,
+        target=target,
         shortcut_path=lnk,
-        args=f'"{main_py}"',
+        args=args,
         working_dir=str(base_dir),
         icon_path=f"{icon},0" if icon.exists() else "",
         description="WinCity Taskbar Battery Indicator",
     )
     return lnk if ok else None
+

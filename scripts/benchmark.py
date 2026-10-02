@@ -3,8 +3,9 @@ WinCity Performance & Resource Profiler.
 Measures RAM, CPU utilization, thread count, handle count, and wakeups.
 
 Usage:
-  python benchmark_profile.py --run-python --duration 15 --save baseline_python.json
-  python benchmark_profile.py --compare baseline_python.json native_rust.json
+  python scripts/benchmark.py --run python --duration 10 --save python_baseline.json
+  python scripts/benchmark.py --run rust   --duration 10 --save rust_bench.json
+  python scripts/benchmark.py --compare python_baseline.json rust_bench.json
 """
 import argparse
 import json
@@ -144,9 +145,9 @@ def compare_reports(file1: Path, file2: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Profile WinCity resource usage.")
-    parser.add_argument("--run-python", action="store_true", help="Launch and profile Python WinCity")
+    parser.add_argument("--run", choices=["python", "rust"], help="Launch and profile WinCity version")
     parser.add_argument("--pid", type=int, help="Attach to existing PID")
-    parser.add_argument("--duration", type=float, default=15.0, help="Benchmark duration in seconds")
+    parser.add_argument("--duration", type=float, default=10.0, help="Benchmark duration in seconds")
     parser.add_argument("--save", type=str, help="Save JSON report to file")
     parser.add_argument("--compare", nargs=2, help="Compare two benchmark JSON files")
 
@@ -156,35 +157,42 @@ def main():
         compare_reports(Path(args.compare[0]), Path(args.compare[1]))
         return
 
+    root_dir = Path(__file__).parent.parent.resolve()
     target_proc = None
     spawned_p = None
 
-    if args.run_python:
-        main_py = Path(__file__).parent / "main.py"
+    if args.run == "python":
+        main_py = root_dir / "python" / "main.py"
         py_exe = sys.executable
-        spawned_p = subprocess.Popen([py_exe, str(main_py)], cwd=str(Path(__file__).parent))
+        spawned_p = subprocess.Popen([py_exe, str(main_py)], cwd=str(root_dir))
+        time.sleep(1.0)
+        target_proc = psutil.Process(spawned_p.pid)
+    elif args.run == "rust":
+        rust_exe = root_dir / "rust" / "target" / "release" / "wincity.exe"
+        if not rust_exe.exists():
+            print(f"[!] Rust executable not found at: {rust_exe}")
+            print("[*] Building release binary first...")
+            subprocess.run(["cargo", "build", "--release"], cwd=str(root_dir / "rust"), check=True)
+        spawned_p = subprocess.Popen([str(rust_exe)], cwd=str(root_dir))
         time.sleep(1.0)
         target_proc = psutil.Process(spawned_p.pid)
     elif args.pid:
         target_proc = psutil.Process(args.pid)
     else:
-        # Auto-find WinCity or python running main.py
+        # Auto-find running process
         for p in psutil.process_iter(attrs=["pid", "name", "cmdline"]):
             try:
                 cmd = " ".join(p.info.get("cmdline") or [])
-                if "main.py" in cmd or "WinCity" in p.info.get("name", ""):
+                name = p.info.get("name", "")
+                if "main.py" in cmd or "wincity.exe" in name.lower() or "wincity" in name.lower():
                     target_proc = p
                     break
             except Exception:
                 pass
 
         if not target_proc:
-            print("[!] No running WinCity process found. Launching Python version for benchmarking...")
-            main_py = Path(__file__).parent / "main.py"
-            py_exe = sys.executable
-            spawned_p = subprocess.Popen([py_exe, str(main_py)], cwd=str(Path(__file__).parent))
-            time.sleep(1.5)
-            target_proc = psutil.Process(spawned_p.pid)
+            print("[!] No running WinCity process found. Use --run python or --run rust.")
+            return
 
     try:
         metrics = profile_process(target_proc, duration=args.duration)
@@ -192,7 +200,6 @@ def main():
         if args.save:
             Path(args.save).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
             print(f"[OK] Saved benchmark data to: {args.save}")
-
     finally:
         if spawned_p:
             try:

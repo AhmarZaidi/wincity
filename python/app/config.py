@@ -7,14 +7,21 @@ import pathlib
 import sys
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-# When frozen by PyInstaller (--onefile), __file__ is inside a temp extraction
-# dir; use the exe location instead so data/ is found next to the exe.
-_BASE_DIR    = (pathlib.Path(sys.executable).parent
-                if getattr(sys, "frozen", False)
-                else pathlib.Path(__file__).parent.parent)
+def _find_base_dir() -> pathlib.Path:
+    if getattr(sys, "frozen", False):
+        return pathlib.Path(sys.executable).parent
+    here = pathlib.Path(__file__).resolve()
+    for p in [here.parent.parent.parent, here.parent.parent, here.parent]:
+        if (p / "data").exists() or (p / "assets").exists():
+            return p
+    return here.parent.parent.parent
+
+_BASE_DIR    = _find_base_dir()
 _DATA_DIR    = _BASE_DIR / "data"
+_ASSETS_DIR  = _BASE_DIR / "assets"
 _CONFIG_FILE = _DATA_DIR / "config.json"
 _STATE_FILE  = _DATA_DIR / "state.json"
+
 
 # ── Runtime constants (overwritten by load_config) ────────────────────────────
 WIDGET_WIDTH         = 55

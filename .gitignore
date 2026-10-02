@@ -3,7 +3,10 @@
 __pycache__/
 dist/
 build/
+target/
+rust/target/
 *.spec
 *.lnk
 *.tmp
+*.log
 install-pyenv-win.ps1
