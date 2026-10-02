@@ -1,0 +1,13 @@
+{
+  "duration_sec": 5.0,
+  "samples_count": 10,
+  "cpu_avg_pct": 0.0,
+  "cpu_peak_pct": 0.0,
+  "cpu_time_total_ms": 0.0,
+  "ram_working_set_avg_mb": 84.36,
+  "ram_working_set_peak_mb": 84.36,
+  "ram_private_avg_mb": 28.94,
+  "ram_private_peak_mb": 28.94,
+  "threads_avg": 4.0,
+  "handles_avg": 339.0
+}
