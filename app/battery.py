@@ -73,9 +73,31 @@ def fmt_health(designed_mwh, full_mwh):
 
 # ── Hardware IOCTL query ──────────────────────────────────────────────────────
 
-def query_battery_hw():
-    """Query battery via Win32 IOCTL. Returns (rate_mw, designed_mwh, full_mwh, cycle_count, temp_c)."""
-    rate_mw = designed_mwh = full_mwh = cycle_count = temp_c = None
+_static_hw_cache: dict = {
+    "designed_mwh": None,
+    "full_mwh": None,
+    "cycle_count": None,
+    "ts": 0.0,
+}
+
+_wmi_temp_cache: dict = {"val": None, "ts": -999.0}
+
+
+def query_battery_hw(include_temp: bool = False):
+    """
+    Query battery via Win32 IOCTL. Returns (rate_mw, designed_mwh, full_mwh, cycle_count, temp_c).
+    Caches static attributes (designed capacity, full capacity, cycle count) to save CPU/battery.
+    Temperature is only queried via ACPI fallback if include_temp is True.
+    """
+    now = time.monotonic()
+    rate_mw = temp_c = None
+    designed_mwh = _static_hw_cache["designed_mwh"]
+    full_mwh = _static_hw_cache["full_mwh"]
+    cycle_count = _static_hw_cache["cycle_count"]
+
+    # If static cache is older than 5 minutes, refresh it too
+    need_static = (designed_mwh is None or full_mwh is None or (now - _static_hw_cache["ts"] > 300.0))
+
     try:
         class _GUID(ctypes.Structure):
             _fields_ = [('Data1', ctypes.c_ulong), ('Data2', ctypes.c_ushort),
@@ -170,27 +192,34 @@ def query_battery_hw():
                         if status.Rate != BATTERY_UNKNOWN_RATE:
                             rate_mw = status.Rate
 
-                    qinfo = _BAT_QUERY_INFO(BatteryTag=tag.value, InformationLevel=0, AtRate=0)
-                    binfo = _BAT_INFO()
-                    if k32.DeviceIoControl(hbat_p, IOCTL_BATTERY_QUERY_INFORMATION,
-                            ctypes.byref(qinfo), ctypes.sizeof(qinfo),
-                            ctypes.byref(binfo), ctypes.sizeof(binfo), ctypes.byref(br), None):
-                        if binfo.DesignedCapacity > 0:
-                            designed_mwh = int(binfo.DesignedCapacity)
-                            full_mwh     = int(binfo.FullChargedCapacity)
-                        if binfo.CycleCount > 0:          # CycleCount is the correct field
-                            cycle_count  = int(binfo.CycleCount)
+                    if need_static:
+                        qinfo = _BAT_QUERY_INFO(BatteryTag=tag.value, InformationLevel=0, AtRate=0)
+                        binfo = _BAT_INFO()
+                        if k32.DeviceIoControl(hbat_p, IOCTL_BATTERY_QUERY_INFORMATION,
+                                ctypes.byref(qinfo), ctypes.sizeof(qinfo),
+                                ctypes.byref(binfo), ctypes.sizeof(binfo), ctypes.byref(br), None):
+                            if binfo.DesignedCapacity > 0:
+                                designed_mwh = int(binfo.DesignedCapacity)
+                                full_mwh     = int(binfo.FullChargedCapacity)
+                                _static_hw_cache["designed_mwh"] = designed_mwh
+                                _static_hw_cache["full_mwh"] = full_mwh
+                            if binfo.CycleCount > 0:
+                                cycle_count  = int(binfo.CycleCount)
+                                _static_hw_cache["cycle_count"] = cycle_count
+                            _static_hw_cache["ts"] = now
 
-                    qtemp = _BAT_QUERY_INFO(BatteryTag=tag.value, InformationLevel=2, AtRate=0)
-                    t_raw = ctypes.c_ulong(0)
-                    if k32.DeviceIoControl(hbat_p, IOCTL_BATTERY_QUERY_INFORMATION,
-                            ctypes.byref(qtemp), ctypes.sizeof(qtemp),
-                            ctypes.byref(t_raw), ctypes.sizeof(t_raw),
-                            ctypes.byref(br), None) and t_raw.value > 0:
-                        v   = t_raw.value
-                        t_c = (v / 10.0 - 273.15) if v > 1000 else (v - 273.15)
-                        if -20.0 <= t_c <= 80.0:
-                            temp_c = round(t_c, 1)
+                    # Query direct battery temperature via IOCTL if requested
+                    if include_temp:
+                        qtemp = _BAT_QUERY_INFO(BatteryTag=tag.value, InformationLevel=2, AtRate=0)
+                        t_raw = ctypes.c_ulong(0)
+                        if k32.DeviceIoControl(hbat_p, IOCTL_BATTERY_QUERY_INFORMATION,
+                                ctypes.byref(qtemp), ctypes.sizeof(qtemp),
+                                ctypes.byref(t_raw), ctypes.sizeof(t_raw),
+                                ctypes.byref(br), None) and t_raw.value > 0:
+                            v   = t_raw.value
+                            t_c = (v / 10.0 - 273.15) if v > 1000 else (v - 273.15)
+                            if -20.0 <= t_c <= 80.0:
+                                temp_c = round(t_c, 1)
                     break
                 finally:
                     k32.CloseHandle(hbat_p)
@@ -198,18 +227,18 @@ def query_battery_hw():
             sa.SetupDiDestroyDeviceInfoList(hdev_p)
     except Exception:
         pass
-    if temp_c is None:
+
+    # Only run ACPI thermal zone WMI query if requested AND IOCTL didn't return temp
+    if include_temp and temp_c is None:
         temp_c = _query_temp_wmi()
+
     return rate_mw, designed_mwh, full_mwh, cycle_count, temp_c
 
 
-_wmi_temp_cache: dict = {"val": None, "ts": -999.0}
-
-
 def _query_temp_wmi():
-    """Read ACPI thermal zone temperature via WMI PowerShell (cached 60 s)."""
+    """Read ACPI thermal zone temperature via WMI PowerShell (cached 120 s). Only called when popup is open."""
     now = time.monotonic()
-    if now - _wmi_temp_cache["ts"] < 60.0:
+    if now - _wmi_temp_cache["ts"] < 120.0:
         return _wmi_temp_cache["val"]
     val = None
     try:
@@ -219,7 +248,7 @@ def _query_temp_wmi():
              "-ClassName MSAcpi_ThermalZoneTemperature "
              "-ErrorAction SilentlyContinue | "
              "Select-Object -First 1).CurrentTemperature"],
-            capture_output=True, text=True, timeout=5, creationflags=0x08000000)
+            capture_output=True, text=True, timeout=3, creationflags=0x08000000)
         raw = r.stdout.strip()
         if raw and raw.lstrip("-").isdigit():
             t_c = round(int(raw) / 10.0 - 273.15, 1)
@@ -230,6 +259,7 @@ def _query_temp_wmi():
     _wmi_temp_cache["val"] = val
     _wmi_temp_cache["ts"]  = now
     return val
+
 
 
 # ── Per-process wattage tracking ─────────────────────────────────────────────
@@ -330,36 +360,20 @@ def get_screen_on_seconds() -> int | None:
 def get_total_watts(rate_mw=None) -> float:
     """
     Best-effort system power draw in Watts.
-    Prefers the IOCTL rate_mw; falls back to a WMI/CPU-based estimate.
+    Prefers the IOCTL rate_mw; falls back to a fast CPU/system power estimate without external processes.
     """
     if rate_mw is not None:
         w = abs(rate_mw) / 1000.0
         if w > 0.1:
             return w
 
-    # WMI fallback (from battery_tracker approach)
-    try:
-        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-               "Get-CimInstance -Namespace root/wmi -ClassName BatteryStatus | "
-               "Select-Object -Property DischargeRate, Discharging, Voltage | ConvertTo-Json"]
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                timeout=2, creationflags=0x08000000)
-        if result.returncode == 0 and result.stdout.strip():
-            data = json.loads(result.stdout)
-            if isinstance(data, list):
-                data = data[0] if data else {}
-            discharge_rate = data.get("DischargeRate", 0)
-            if data.get("Discharging") and discharge_rate > 0:
-                return discharge_rate / 1000.0
-    except Exception:
-        pass
-
-    # Dynamic CPU-based fallback
+    # Fast dynamic CPU-based estimate (0 subprocesses spawned)
     try:
         cpu = psutil.cpu_percent(interval=None)
     except Exception:
-        cpu = 30.0
-    return round(12.5 + cpu * 0.18, 2)
+        cpu = 15.0
+    return round(10.0 + cpu * 0.15, 2)
+
 
 
 def kill_process(pid: int) -> bool:

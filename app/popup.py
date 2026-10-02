@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 from . import config
 from . import system
+from . import startup
 from . import battery as bat_mod
 from .render import load_font
 import ctypes
@@ -836,6 +837,21 @@ class BatteryPopup:
         self._settings_hit_regions["customize_rows"] = (px, y, w - px, y + rh2)
         y += rh2
 
+        # "Start with Windows" toggle button
+        autostart_on = startup.is_autostart_enabled()
+        hov_as = self._hover_key == "toggle_autostart"
+        my_as  = y + rh2 // 2
+        if hov_as:
+            d.rounded_rectangle([px, y + int(2 * s), w - px, y + rh2 - int(2 * s)],
+                                 radius=int(6 * s), fill=a(self._hov))
+        chk_ic  = self._IC["check_on"] if autostart_on else self._IC["check_off"]
+        chk_col = a(self._acc) if autostart_on else a(self._fg2)
+        d.text((px + ix, my_as), chk_ic, font=ifnt, fill=chk_col, anchor="mm")
+        d.text((px + ix * 2 + int(4 * s), my_as), "Start with Windows",
+               font=nfnt, fill=a(self._fg if autostart_on else self._fg2), anchor="lm")
+        self._settings_hit_regions["toggle_autostart"] = (px, y, w - px, y + rh2)
+        y += rh2
+
         # "Move Icon" button
         hov_mv = self._hover_key == "move_icon"
         my2    = y + rh2 // 2
@@ -850,6 +866,7 @@ class BatteryPopup:
         y += rh2
 
         return y
+
 
     # ── Rows config page ───────────────────────────────────────────────────────
 
@@ -1221,10 +1238,17 @@ class BatteryPopup:
                 x0, y0, x1, y1 = regions
                 if x0 <= x < x1 and y0 <= y < y1:
                     self.page = "rows_config"; self._hover_key = None; self._redraw(); return
+            elif key == "toggle_autostart":
+                x0, y0, x1, y1 = regions
+                if x0 <= x < x1 and y0 <= y < y1:
+                    cur = startup.is_autostart_enabled()
+                    startup.set_autostart(not cur)
+                    self._redraw(); return
             elif key == "move_icon":
                 x0, y0, x1, y1 = regions
                 if x0 <= x < x1 and y0 <= y < y1:
                     self._move_cb(); return
+
             else:
                 if key not in settings_meta:
                     continue
@@ -1379,30 +1403,35 @@ class BatteryPopup:
     # ── Apps background updater ────────────────────────────────────────────────
 
     def _start_apps_updater(self):
+        if getattr(self, "_apps_thread_running", False):
+            return
+        self._apps_thread_running = True
         threading.Thread(target=self._apps_update_loop, daemon=True).start()
 
     def _apps_update_loop(self):
         """Refresh process list every 2 s while on apps page."""
-        while True:
-            if self.page != "apps":
-                return
-            try:
-                # Lazy-init ProcessTracker so it doesn't slow popup open
-                if self._process_tracker is None:
-                    self._process_tracker = bat_mod.ProcessTracker()
-
-                total_watts = bat_mod.get_total_watts(self._rate_mw)
-                procs       = self._process_tracker.update(total_watts)
-                with self._app_lock:
-                    self._app_list        = procs
-                    self._actual_total_watts = total_watts
+        try:
+            while self.page == "apps":
                 try:
-                    self.win.after(0, self._redraw)
+                    # Lazy-init ProcessTracker so it doesn't slow popup open
+                    if self._process_tracker is None:
+                        self._process_tracker = bat_mod.ProcessTracker()
+
+                    total_watts = bat_mod.get_total_watts(self._rate_mw)
+                    procs       = self._process_tracker.update(total_watts)
+                    with self._app_lock:
+                        self._app_list        = procs
+                        self._actual_total_watts = total_watts
+                    try:
+                        self.win.after(0, self._redraw)
+                    except Exception:
+                        return
                 except Exception:
-                    return
-            except Exception:
-                pass
-            time.sleep(2)
+                    pass
+                time.sleep(2)
+        finally:
+            self._apps_thread_running = False
+
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 

@@ -27,127 +27,105 @@
 
 ## Project structure
 
+## Project structure
+
 ```
-battery_tray/
+wincity/
 ├── app/
 │   ├── __init__.py
-│   ├── config.py      constants, colors/rows globals, load/save config & state
-│   ├── system.py      Win32 helpers (DPI, taskbar, dark mode, power mode)
-│   ├── battery.py     IOCTL queries, WMI temp fallback, display formatters
-│   ├── render.py      battery icon renderer
-│   ├── popup.py       hover popup with history graph
-│   └── widget.py      main tkinter widget
+│   ├── config.py          constants, colors/rows globals, load/save config & state
+│   ├── system.py          Win32 helpers (DPI, taskbar, dark mode, power mode)
+│   ├── startup.py         Windows shortcut & auto-start manager (.lnk, shell:startup)
+│   ├── battery.py         IOCTL queries, battery wattage & health telemetry
+│   ├── render.py          battery icon renderer
+│   ├── popup.py           hover popup with history graph, settings & process monitor
+│   └── widget.py          main tkinter taskbar widget with render cache
 ├── assets/
-│   ├── appicon.ico    application icon
-│   └── banner.png     README banner image
+│   ├── appicon.ico        application icon
+│   └── banner.png         README banner image
 ├── data/
-│   ├── config.json    user-editable settings & colors
-│   ├── state-prev.json previous runtime state (history, elapsed time) - gitignored
-│   └── state.json     runtime state (history, elapsed time) - gitignored
+│   ├── config.json        user-editable settings & colors
+│   └── state.json         runtime state (history, elapsed time) - gitignored
 ├── dist/
-│   └── WinCity.exe    built executable → will be created after running build.bat or build.ps1
-├── build.bat          double-click shortcut → runs build.ps1
-├── build.ps1          builds dist\WinCity.exe via PyInstaller
-├── main.py            ← entry point
-├── README.md          this file
-└── requirements.txt   Python dependencies
+│   └── WinCity.exe        built executable (optional)
+├── setup_shortcuts.bat    1-click setup → creates WinCity.lnk & configures Windows auto-start
+├── setup_shortcuts.py     Python shortcut and auto-start installer
+├── wincity.pyw            silent GUI launcher (runs via pythonw)
+├── start.vbs              silent VBScript launcher (0 console window)
+├── start.bat              batch launcher
+├── build.bat              double-click shortcut → runs build.ps1
+├── build.ps1              builds dist\WinCity.exe via PyInstaller
+├── main.py                ← entry point
+├── README.md              this file
+└── requirements.txt       Python dependencies
 ```
 
 ---
 
-## Quick start
+## Quick start (No SmartScreen Issues)
 
 Pre-requisite: Go to Settings (Win + I) > System > Power & Battery > Turn on Battery Percentage.
 
-### Download and run the released .exe:
-
-Download the latest release from the [Releases page](https://github.com/AhmarZaidi/wincity/releases), and run `WinCity.exe`.
-
-OR
-
-### Clone the repo and run from source:
-
+### 1. Install dependencies:
 ```powershell
-git clone https://github.com/AhmarZaidi/wincity
 pip install -r requirements.txt
-python main.py
 ```
 
-**Run detached in the background:**
-```powershell
-Start-Process python -ArgumentList "main.py" -WindowStyle Hidden
-```
+### 2. Set up Double-Click Icon & Windows Startup:
+Double-click **`setup_shortcuts.bat`** (or run `python setup_shortcuts.py`).
 
-**Stop**
-```powershell
-Stop-Process -Name python
-```
+This will:
+- Create **`WinCity.lnk`** directly in the project folder with the custom WinCity icon.
+- Create a **Desktop shortcut** (optional).
+- Add **WinCity to Windows Startup** (`shell:startup`) so it automatically starts silently in the background when your PC boots.
+- **No SmartScreen warnings** because it runs through Python's standard `pythonw.exe`.
+
+### 3. Launching WinCity:
+- **Double-click `WinCity.lnk`** (with the custom icon) or **`wincity.pyw`** or **`start.vbs`**.
+- It runs 100% silently in the background without any flashing console window.
+
+---
+
+## Auto-Start on Windows Login
+
+You can manage auto-starting on Windows boot at any time:
+- **Option 1 (In-App Menu):** Right-click the taskbar battery widget → check/uncheck **"Start with Windows"**.
+- **Option 2 (In-App Settings):** Hover over widget → Settings (gear icon) → toggle **"Start with Windows"**.
+- **Option 3 (Setup Script):** Double-click `setup_shortcuts.bat`.
+
+---
+
+## Battery & Power Optimizations
+
+WinCity is engineered for minimal battery consumption:
+- **Render Caching:** When battery state is unchanged, Pillow 8x supersampling and canvas redrawing are completely skipped (0% idle CPU).
+- **No Periodic PowerShell Spawning:** Removed all background `powershell.exe` / CIM subprocess polling that previously spiked CPU and drained battery.
+- **Idle Timer Gating:** Telemetry and live popup refresh loops are suspended whenever the hover popup is closed.
+- **Lazy Hardware IOCTLs:** Heavy device interface enumeration and static capacity queries are cached and only queried when required.
+- **Single-Instance Enforcement:** Uses a Win32 mutex to prevent duplicate running instances.
 
 ---
 
 ## Configuration
 
-Edit `data/config.json` to customise the widget. Changes are picked up automatically without restarting.
+Edit `data/config.json` (or use the in-app Settings UI) to customise the widget. Changes are picked up automatically without restarting.
 
 Key settings:
 - `rows`: control which info rows appear in the popup and in what order (`"visible": false` to hide)
 - `colors`: per-theme hex colors for dark, light, graph, and widget fill
 - `LOW_PCT`: percentage threshold for the red low-battery indicator
 - `OFFSET_FROM_RIGHT`: widget position from the right edge of the taskbar
-
----
-
-## Build a standalone .exe
-
-**Option A - double-click** `build.bat` in Windows Explorer.
-
-**Option B - from PowerShell:**
-```powershell
-.\build.ps1
-```
-
-Produces `dist\WinCity.exe` - no Python required to run.
-
----
-
-## Auto-start on login
-
-> The `data/` folder (config, state) is always created next to wherever `WinCity.exe` lives — keep the exe in a permanent location before setting up auto-start.
-
-**Steps (silent start — no console window flashes at login):**
-
-1. Place `WinCity.exe` somewhere permanent, e.g. `C:\Users\<YourName>\Apps\WinCity\WinCity.exe`.
-2. Press **Win + R**, type `shell:startup`, press **Enter** — this opens your Startup folder.
-3. Right-click inside the Startup folder → **New → Shortcut**.
-4. In the *location* field, paste the following (replace the path with your actual exe path):
-   ```
-   powershell.exe -WindowStyle Hidden -Command "Start-Process 'C:\Users\<YourName>\Apps\WinCity\WinCity.exe'"
-   ```
-   > Update the path to match where you placed `WinCity.exe`.
-5. Click **Next**, name the shortcut (e.g. `WinCity`), click **Finish**.
-
-WinCity will now start silently in the background every time you log in, with no console window.
+- `VISIBILITY_POLL_MS`: taskbar / fullscreen window detection frequency (default: 1000ms)
 
 ---
 
 ## Troubleshooting
 
-If facing issues like incorrect values at start, or getting stuck, then delete the `data/config.json` file.
-A new file will automatically be created next time it starts.
+If facing issues like incorrect values at start, or getting stuck, delete the `data/config.json` file. A fresh one will be generated automatically.
 
-If issue is still not solved, please raise an issue [here](https://github.com/AhmarZaidi/wincity/issues)
-
-## Known Issues
-
-- Graph may be buggy in some edge cases. Especially when charging.
-- Charging time estimation may not be accurate.
-- Settings button is not implemented yet.
-
-## Todos
-
-- [ ] Add settings page to configure colors, rows, thresholds, etc.
-- [ ] Add more battery info like cycle count, temperature, etc.
+To report bugs or suggestions, visit [Issues](https://github.com/AhmarZaidi/wincity/issues).
 
 ## Uninstall
 
-Quit via right-click → Quit, then delete the folder and remove the startup shortcut.
+Right-click the widget → **Quit**, uncheck **"Start with Windows"** (or delete the shortcut in `shell:startup`), then delete the project folder.
+

@@ -12,6 +12,7 @@ from PIL import Image, ImageTk
 
 from . import config
 from . import system
+from . import startup
 from . import battery as bat_mod
 from .render import render_battery
 from .popup import BatteryPopup
@@ -59,6 +60,7 @@ class BatteryWidget:
         self._last_bat      = None
         self._last_label    = None
         self._last_secs     = None
+        self._last_draw_key = None
         self._last_rate_mw      = None
         self._last_designed_mwh = None
         self._last_full_mwh     = None
@@ -133,10 +135,15 @@ class BatteryWidget:
         self.canvas.pack()
         self._place(tb, tb_h)
 
+        self._autostart_var = tk.BooleanVar(value=startup.is_autostart_enabled())
         self._menu = tk.Menu(self.root, tearoff=0, bg="#2d2d2d", fg="#ffffff",
                              activebackground="#3a3a3a", activeforeground="#ffffff",
                              font=("Segoe UI", 9))
         self._menu.add_command(label="WinCity", state="disabled")
+        self._menu.add_separator()
+        self._menu.add_checkbutton(label="Start with Windows", variable=self._autostart_var,
+                                   command=self._toggle_autostart)
+        self._menu.add_command(label="Settings", command=self._open_settings_page)
         self._menu.add_separator()
         self._menu.add_command(label="Quit", command=self._quit)
         self.canvas.bind("<Button-3>", self._show_menu)
@@ -153,7 +160,7 @@ class BatteryWidget:
 
         threading.Thread(target=self._bg_updater, daemon=True).start()
         self.root.after(config.VISIBILITY_POLL_MS, self._poll_taskbar_visibility)
-        self.root.after(int(config.POPUP_REFRESH_INTERVAL * 1000), self._popup_refresh_tick)
+
 
     # ── Positioning ────────────────────────────────────────────────────────────
 
@@ -183,9 +190,18 @@ class BatteryWidget:
     # ── Drawing ────────────────────────────────────────────────────────────────
 
     def _draw(self, bat, label=None):
+        dark = system.is_dark_mode()
+        pwr_mode = system.get_power_mode()
+        pct = round(bat.percent, 1) if bat else None
+        plugged = bat.power_plugged if bat else None
+        draw_key = (pct, plugged, pwr_mode, dark, label, self.W, self.H)
+        if draw_key == self._last_draw_key and hasattr(self, "_photo"):
+            return
+        self._last_draw_key = draw_key
+
         W, H  = self.W, self.H
         T     = (1, 1, 1)
-        batt  = render_battery(W, H, bat, label, dark=system.is_dark_mode())
+        batt  = render_battery(W, H, bat, label, dark=dark)
         bg    = Image.new("RGB", (W, H), T)
         bg.paste(batt, mask=batt.split()[3])
         self._photo = ImageTk.PhotoImage(bg)
@@ -229,6 +245,7 @@ class BatteryWidget:
         if bat is not None:
             self._history.append((time.monotonic(), bat.percent, bat.power_plugged))
 
+        charger_changed = False
         if bat is not None:
             plugged = bat.power_plugged
             if self._prev_plugged is None:
@@ -238,6 +255,7 @@ class BatteryWidget:
                     self._discharge_start = time.monotonic()
             elif self._prev_plugged and not plugged:
                 # Charger disconnected — save current charging session, start discharge
+                charger_changed = True
                 self._save_session("charging")
                 self._history.clear()
                 self._discharge_start = time.monotonic()
@@ -245,6 +263,7 @@ class BatteryWidget:
                 self._persist_state()
             elif not self._prev_plugged and plugged:
                 # Charger connected — save current discharge session, start charging
+                charger_changed = True
                 self._save_session("discharging")
                 self._history.clear()
                 self._charge_start    = time.monotonic()
@@ -260,18 +279,25 @@ class BatteryWidget:
         else:
             self._last_elapsed_secs = None
 
-        rate_mw, designed_mwh, full_mwh, cycle_count, temp_c = bat_mod.query_battery_hw()
-        self._last_rate_mw      = rate_mw
-        self._last_designed_mwh = designed_mwh
-        self._last_full_mwh     = full_mwh
-        self._last_cycle_count  = cycle_count
-        self._last_temp_c       = temp_c
+        # Only run heavier hardware queries if popup is open or charger just changed
+        if self._popup is not None or charger_changed or self._last_rate_mw is None:
+            include_temp = (self._popup is not None and any(
+                r.get("id") == "temperature" and r.get("visible") for r in config.ROWS_CONFIG
+            ))
+            rate_mw, designed_mwh, full_mwh, cycle_count, temp_c = bat_mod.query_battery_hw(include_temp=include_temp)
+            self._last_rate_mw      = rate_mw
+            self._last_designed_mwh = designed_mwh
+            self._last_full_mwh     = full_mwh
+            self._last_cycle_count  = cycle_count
+            self._last_temp_c       = temp_c
+
         self._draw(bat, label)
 
         self._save_counter += 1
         if self._save_counter >= 30:
             self._save_counter = 0
             self._persist_state()
+
 
     def _save_session(self, session_type: str):
         """Snapshot the current history as a completed session and append to self._sessions."""
@@ -336,21 +362,31 @@ class BatteryWidget:
     # ── Live popup refresh ─────────────────────────────────────────────────────
 
     def _popup_refresh_tick(self):
-        """Called every POPUP_REFRESH_INTERVAL; pushes fresh telemetry into open popup."""
+        """Called every POPUP_REFRESH_INTERVAL while popup is open; pushes fresh telemetry into open popup."""
+        if self._popup is None:
+            return
+        try:
+            include_temp = any(r.get("id") == "temperature" and r.get("visible") for r in config.ROWS_CONFIG)
+            rate_mw, designed_mwh, full_mwh, cycle_count, temp_c = bat_mod.query_battery_hw(include_temp=include_temp)
+            self._last_rate_mw      = rate_mw
+            self._last_designed_mwh = designed_mwh
+            self._last_full_mwh     = full_mwh
+            self._last_cycle_count  = cycle_count
+            self._last_temp_c       = temp_c
+
+            self._popup.push_update(
+                self._last_bat, self._last_label, self._last_secs,
+                self._last_rate_mw, self._last_designed_mwh, self._last_full_mwh,
+                self._last_cycle_count, self._last_temp_c,
+                self._last_elapsed_secs,
+                list(self._history),
+                self._sessions,
+            )
+        except Exception:
+            pass
         if self._popup is not None:
-            try:
-                self._popup.push_update(
-                    self._last_bat, self._last_label, self._last_secs,
-                    self._last_rate_mw, self._last_designed_mwh, self._last_full_mwh,
-                    self._last_cycle_count, self._last_temp_c,
-                    self._last_elapsed_secs,
-                    list(self._history),
-                    self._sessions,
-                )
-            except Exception:
-                pass
-        interval_ms = max(500, int(config.POPUP_REFRESH_INTERVAL * 1000))
-        self.root.after(interval_ms, self._popup_refresh_tick)
+            interval_ms = max(500, int(config.POPUP_REFRESH_INTERVAL * 1000))
+            self.root.after(interval_ms, self._popup_refresh_tick)
 
     # ── Taskbar visibility tracking ────────────────────────────────────────────
 
@@ -364,13 +400,21 @@ class BatteryWidget:
             self._widget_shown = False
         self.root.after(config.VISIBILITY_POLL_MS, self._poll_taskbar_visibility)
 
-    # ── Hover popup ────────────────────────────────────────────────────────────
+    # ── Hover popup ────────────────────────────────────────────────────
 
     def _on_hover_enter(self, _e=None):
         if self._popup is None:
             self._open_popup()
 
     def _open_popup(self):
+        include_temp = any(r.get("id") == "temperature" and r.get("visible") for r in config.ROWS_CONFIG)
+        rate_mw, designed_mwh, full_mwh, cycle_count, temp_c = bat_mod.query_battery_hw(include_temp=include_temp)
+        self._last_rate_mw      = rate_mw
+        self._last_designed_mwh = designed_mwh
+        self._last_full_mwh     = full_mwh
+        self._last_cycle_count  = cycle_count
+        self._last_temp_c       = temp_c
+
         self._popup = BatteryPopup(
             self.root,
             self.root.winfo_x(), self.root.winfo_y(), self.W, self.H,
@@ -386,6 +430,9 @@ class BatteryWidget:
             settings_saved_cb=self._on_settings_saved,
         )
         self._watch_popup()
+        interval_ms = max(500, int(config.POPUP_REFRESH_INTERVAL * 1000))
+        self.root.after(interval_ms, self._popup_refresh_tick)
+
 
     def _watch_popup(self):
         if self._popup is None:
@@ -485,7 +532,18 @@ class BatteryWidget:
     # ── Menu / quit ────────────────────────────────────────────────────────────
 
     def _show_menu(self, event):
+        self._autostart_var.set(startup.is_autostart_enabled())
         self._menu.tk_popup(event.x_root, event.y_root)
+
+    def _toggle_autostart(self):
+        startup.set_autostart(self._autostart_var.get())
+
+    def _open_settings_page(self):
+        if self._popup is None:
+            self._open_popup()
+        if self._popup:
+            self._popup.page = "settings"
+            self._popup._redraw()
 
     def _quit(self):
         self._persist_state()
@@ -495,3 +553,4 @@ class BatteryWidget:
 
     def run(self):
         self.root.mainloop()
+
