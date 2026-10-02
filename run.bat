@@ -1,31 +1,21 @@
 @echo off
-REM WinCity Launcher & Tooling Hub
-setlocal
+setlocal EnableDelayedExpansion
 
-set "PYTHON_EXE=python"
-where python >nul 2>nul
-if errorlevel 1 (
-    where py >nul 2>nul
-    if not errorlevel 1 (
-        set "PYTHON_EXE=py"
-    ) else (
-        if exist "%USERPROFILE%\.pyenv\pyenv-win\versions\3.14.5\python.exe" (
-            set "PYTHON_EXE=%USERPROFILE%\.pyenv\pyenv-win\versions\3.14.5\python.exe"
-        )
-    )
-)
+:: -------------------------------------------------------------
+:: Detect Python executable
+:: -------------------------------------------------------------
+set "PYTHON_EXE="
+set "PYTHONW_EXE="
 
-set "PYTHONW_EXE=pythonw"
-where pythonw >nul 2>nul
-if errorlevel 1 (
-    where pyw >nul 2>nul
-    if not errorlevel 1 (
-        set "PYTHONW_EXE=pyw"
-    ) else (
-        if exist "%USERPROFILE%\.pyenv\pyenv-win\versions\3.14.5\pythonw.exe" (
-            set "PYTHONW_EXE=%USERPROFILE%\.pyenv\pyenv-win\versions\3.14.5\pythonw.exe"
-        )
-    )
+if exist "%USERPROFILE%\.pyenv\pyenv-win\versions\3.14.5\python.exe" (
+    set "PYTHON_EXE=%USERPROFILE%\.pyenv\pyenv-win\versions\3.14.5\python.exe"
+    set "PYTHONW_EXE=%USERPROFILE%\.pyenv\pyenv-win\versions\3.14.5\pythonw.exe"
+) else if exist "%USERPROFILE%\.pyenv\pyenv-win\versions\3.10.11\python.exe" (
+    set "PYTHON_EXE=%USERPROFILE%\.pyenv\pyenv-win\versions\3.10.11\python.exe"
+    set "PYTHONW_EXE=%USERPROFILE%\.pyenv\pyenv-win\versions\3.10.11\pythonw.exe"
+) else (
+    set "PYTHON_EXE=python"
+    set "PYTHONW_EXE=pythonw"
 )
 
 if "%1"=="python" goto run_python
@@ -65,12 +55,14 @@ if not exist "%~dp0rust\target\release\wincity.exe" (
     cargo build --release
     cd /d "%~dp0"
 )
-start "" "%~dp0rust\target\release\wincity.exe"
+start "" /d "%~dp0" "%~dp0rust\target\release\wincity.exe"
 exit /b 0
 
 :run_python
 echo [*] Starting WinCity (Python)...
-start "" "%PYTHONW_EXE%" "%~dp0python\main.py"
+cd /d "%~dp0python"
+start "" "!PYTHONW_EXE!" "main.py"
+cd /d "%~dp0"
 exit /b 0
 
 :run_bench
@@ -83,3 +75,4 @@ goto menu
 "%PYTHON_EXE%" "%~dp0scripts\setup_autostart.py"
 pause
 goto menu
+

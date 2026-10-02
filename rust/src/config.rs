@@ -250,8 +250,25 @@ pub struct RuntimeState {
 
 fn default_schema() -> u32 { 1 }
 
+use std::time::SystemTime;
+
+impl RuntimeState {
+    pub fn record_history_point(&mut self, percent: f64, power_plugged: bool) {
+        let now_sec = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+
+        self.history.push(vec![now_sec, percent, if power_plugged { 1.0 } else { 0.0 }]);
+        if self.history.len() > 300 {
+            self.history.remove(0);
+        }
+    }
+}
+
 pub struct ConfigManager {
     base_dir: PathBuf,
+    last_config_mod: Mutex<Option<SystemTime>>,
     pub config: Mutex<AppConfig>,
     pub state: Mutex<RuntimeState>,
 }
@@ -259,11 +276,14 @@ pub struct ConfigManager {
 impl ConfigManager {
     pub fn new() -> Arc<Self> {
         let base_dir = Self::find_base_dir();
+        let config_file = base_dir.join("data").join("config.json");
+        let initial_mod = fs::metadata(&config_file).ok().and_then(|m| m.modified().ok());
         let config = Self::load_config(&base_dir);
         let state = Self::load_state(&base_dir);
 
         Arc::new(Self {
             base_dir,
+            last_config_mod: Mutex::new(initial_mod),
             config: Mutex::new(config),
             state: Mutex::new(state),
         })
@@ -281,10 +301,28 @@ impl ConfigManager {
         self.base_dir.join("assets")
     }
 
+    pub fn reload_if_modified(&self) -> bool {
+        let config_file = self.data_dir().join("config.json");
+        if let Ok(metadata) = fs::metadata(&config_file) {
+            if let Ok(mod_time) = metadata.modified() {
+                let mut last = self.last_config_mod.lock().unwrap();
+                if last.as_ref() != Some(&mod_time) {
+                    *last = Some(mod_time);
+                    if let Ok(content) = fs::read_to_string(&config_file) {
+                        if let Ok(cfg) = serde_json::from_str::<AppConfig>(&content) {
+                            *self.config.lock().unwrap() = cfg;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     fn find_base_dir() -> PathBuf {
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(parent) = exe_path.parent() {
-                // Check if running from rust/target/release or rust/target/debug
                 let mut p = parent;
                 for _ in 0..4 {
                     if p.join("data").exists() || p.join("assets").exists() {
@@ -334,7 +372,12 @@ impl ConfigManager {
         let tmp_file = data_dir.join("config.json.tmp");
         if let Ok(json) = serde_json::to_string_pretty(&cfg) {
             if fs::write(&tmp_file, json).is_ok() {
-                let _ = fs::rename(tmp_file, config_file);
+                let _ = fs::rename(tmp_file, &config_file);
+                if let Ok(metadata) = fs::metadata(&config_file) {
+                    if let Ok(mod_time) = metadata.modified() {
+                        *self.last_config_mod.lock().unwrap() = Some(mod_time);
+                    }
+                }
             }
         }
     }

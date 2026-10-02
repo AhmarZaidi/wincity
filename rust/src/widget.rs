@@ -18,6 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 const WM_MOUSELEAVE_MSG: u32 = 0x02A3;
+pub const WM_APP_SETTINGS_CHANGED: u32 = windows::Win32::UI::WindowsAndMessaging::WM_USER + 100;
 
 use crate::battery::{self, BatteryInfo};
 use crate::config::ConfigManager;
@@ -40,6 +41,8 @@ pub struct BatteryWidget {
 
 static WIDGET_PTR: std::sync::atomic::AtomicPtr<BatteryWidget> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+
 
 impl BatteryWidget {
     pub fn new(config_mgr: Arc<ConfigManager>) -> Box<Self> {
@@ -109,7 +112,6 @@ impl BatteryWidget {
                 let guid_ac = windows::core::GUID::from_u128(0x5D3E4A25_E05A_4649_8D22_771FE4D1409C);
                 let _ = RegisterPowerSettingNotification(HANDLE(hwnd.0), &guid_ac, REGISTER_NOTIFICATION_FLAGS(0));
 
-
                 // Set timer for periodic checks
                 let poll_ms = widget.config_mgr.config.lock().unwrap().VISIBILITY_POLL_MS;
                 let _ = SetTimer(hwnd, 1, poll_ms, None);
@@ -118,6 +120,17 @@ impl BatteryWidget {
 
                 widget.update_ui();
                 let _ = ShowWindow(hwnd, SW_SHOW);
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                        | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
+                        | windows::Win32::UI::WindowsAndMessaging::SWP_SHOWWINDOW,
+                );
 
                 // Main Message Loop
                 let mut msg = MSG::default();
@@ -171,7 +184,21 @@ impl BatteryWidget {
     }
 
     pub fn update_ui(&mut self) {
+        if self.config_mgr.reload_if_modified() {
+            self.last_draw_key = None;
+            self.reposition();
+            if let Some(ref mut popup) = self.popup_controller {
+                popup.reposition();
+                popup.redraw();
+            }
+        }
+
         let bat = battery::get_battery_basic();
+        if let Some(ref b) = bat {
+            let mut st = self.config_mgr.state.lock().unwrap();
+            st.record_history_point(b.percent, b.power_plugged);
+        }
+
         let label = if self.show_percent {
             bat.as_ref().map(|b| format!("{:.0}%", b.percent))
         } else if let Some(ref b) = bat {
@@ -237,9 +264,9 @@ impl BatteryWidget {
 
         let fill_col = if plugged {
             parse_hex_color(&cfg.colors.widget.fill_charging)
-        } else if pct <= cfg.LOW_PCT {
+        } else if pct <= cfg.LOW_CRITICAL_PCT {
             parse_hex_color(&cfg.colors.widget.fill_low)
-        } else if power_mode == "Battery Saver" {
+        } else if pct <= cfg.LOW_PCT || power_mode == "Battery Saver" {
             parse_hex_color(&cfg.colors.widget.fill_saver)
         } else {
             parse_hex_color(&cfg.colors.widget.fill_normal)
@@ -366,9 +393,15 @@ unsafe extern "system" fn widget_wnd_proc(
             LRESULT(0)
         }
         WM_POWERBROADCAST => {
-            // Instant event notification on battery % or charger state change!
             widget.update_ui();
             LRESULT(1)
+        }
+        WM_APP_SETTINGS_CHANGED => {
+            let _ = widget.config_mgr.reload_if_modified();
+            widget.last_draw_key = None;
+            widget.reposition();
+            widget.update_ui();
+            LRESULT(0)
         }
         WM_TIMER => {
             if wparam.0 == 1 {
@@ -376,6 +409,8 @@ unsafe extern "system" fn widget_wnd_proc(
                 if should_show && !widget.is_visible {
                     let _ = ShowWindow(hwnd, SW_SHOW);
                     widget.is_visible = true;
+                    widget.last_draw_key = None;
+                    widget.update_ui();
                 } else if !should_show && widget.is_visible {
                     let _ = ShowWindow(hwnd, SW_HIDE);
                     widget.is_visible = false;

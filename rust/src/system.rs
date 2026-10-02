@@ -10,7 +10,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, SM_CXSCREEN, SM_CYSCREEN,
 };
 
-use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+// system.rs
 
 pub fn init_dpi_awareness() {
     unsafe {
@@ -80,6 +80,7 @@ pub fn should_show_widget() -> bool {
                     if GetWindowRect(fg, &mut fg_rect).is_ok() {
                         let sw = GetSystemMetrics(SM_CXSCREEN);
                         let sh = GetSystemMetrics(SM_CYSCREEN);
+                        // True fullscreen check: must cover the entire screen AND taskbar
                         if fg_rect.left <= 0
                             && fg_rect.top <= 0
                             && fg_rect.right >= sw
@@ -145,23 +146,10 @@ pub fn is_dark_mode() -> bool {
 
 pub fn get_power_mode() -> String {
     unsafe {
-        let mod_name = w!("powrprof.dll");
-        if let Ok(hmod) = LoadLibraryW(mod_name) {
-            if !hmod.is_invalid() {
-                if let Some(func_ptr) = GetProcAddress(hmod, windows::core::s!("PowerGetEffectiveOverlayScheme")) {
-                    type FnPowerGetEffectiveOverlayScheme = unsafe extern "system" fn(*mut GUID) -> u32;
-                    let func: FnPowerGetEffectiveOverlayScheme = std::mem::transmute(func_ptr);
-                    let mut scheme = GUID::default();
-                    if func(&mut scheme) == 0 {
-                        let s = format!("{:?}", scheme).to_uppercase();
-                        if s.contains("961CC777-2547-4F9D-8174-7D86181B8A7A") {
-                            return "Battery Saver".to_string();
-                        }
-                        if s.contains("DED574B5-45A0-4F42-8734-20B1DE8D37B3") {
-                            return "Best Performance".to_string();
-                        }
-                    }
-                }
+        let mut sps = windows::Win32::System::Power::SYSTEM_POWER_STATUS::default();
+        if windows::Win32::System::Power::GetSystemPowerStatus(&mut sps).is_ok() {
+            if sps.SystemStatusFlag == 1 {
+                return "Battery Saver".to_string();
             }
         }
     }

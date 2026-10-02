@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::ffi::c_void;
 use std::mem::size_of;
 use windows::core::PCWSTR;
@@ -263,7 +265,11 @@ impl BitmapBuffer {
 
             let old_font = SelectObject(self.hdc, hfont);
             let _ = SetBkMode(self.hdc, TRANSPARENT);
-            let _ = SetTextColor(self.hdc, COLORREF(color_rgb));
+
+            let r = (color_rgb >> 16) & 0xFF;
+            let g = (color_rgb >> 8) & 0xFF;
+            let b = color_rgb & 0xFF;
+            let _ = SetTextColor(self.hdc, COLORREF(r | (g << 8) | (b << 16)));
 
             let text_u16: Vec<u16> = text.encode_utf16().collect();
             let mut rect = RECT {
@@ -283,8 +289,6 @@ impl BitmapBuffer {
             let _ = SelectObject(self.hdc, old_font);
             let _ = DeleteObject(hfont);
 
-            // GDI text drawing doesn't set the 32-bit alpha channel (it writes 0x00RRGGBB).
-            // Fix alpha channel for non-black text pixels in the bounding box:
             let left = rect.left.max(0);
             let right = rect.right.min(self.width);
             let top = rect.top.max(0);
@@ -329,7 +333,11 @@ impl BitmapBuffer {
 
             let old_font = SelectObject(self.hdc, hfont);
             let _ = SetBkMode(self.hdc, TRANSPARENT);
-            let _ = SetTextColor(self.hdc, COLORREF(color_rgb));
+
+            let r = (color_rgb >> 16) & 0xFF;
+            let g = (color_rgb >> 8) & 0xFF;
+            let b = color_rgb & 0xFF;
+            let _ = SetTextColor(self.hdc, COLORREF(r | (g << 8) | (b << 16)));
 
             let text_u16: Vec<u16> = text.encode_utf16().collect();
             let mut rect = if align_right {
@@ -355,6 +363,234 @@ impl BitmapBuffer {
                     let p = *self.bits.offset(idx);
                     if (p & 0x00FFFFFF) != 0 {
                         *self.bits.offset(idx) = 0xFF000000 | (p & 0x00FFFFFF);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn draw_icon(&mut self, icon_char: char, cx: i32, cy: i32, font_size: i32, color_rgb: u32) {
+        unsafe {
+            use windows::Win32::Graphics::Gdi::{
+                CreateFontW, DrawTextW, SetBkMode, SetTextColor, DT_CENTER, DT_NOCLIP, DT_SINGLELINE,
+                DT_VCENTER, FW_NORMAL, TRANSPARENT,
+            };
+
+            let font_name: Vec<u16> = "Segoe MDL2 Assets\0".encode_utf16().collect();
+            let hfont = CreateFontW(
+                font_size,
+                0,
+                0,
+                0,
+                FW_NORMAL.0 as i32,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                5,
+                0,
+                PCWSTR::from_raw(font_name.as_ptr()),
+            );
+
+            let old_font = SelectObject(self.hdc, hfont);
+            let _ = SetBkMode(self.hdc, TRANSPARENT);
+
+            let r = (color_rgb >> 16) & 0xFF;
+            let g = (color_rgb >> 8) & 0xFF;
+            let b = color_rgb & 0xFF;
+            let _ = SetTextColor(self.hdc, COLORREF(r | (g << 8) | (b << 16)));
+
+            let mut utf16_buf = [0u16; 2];
+            let text_u16 = icon_char.encode_utf16(&mut utf16_buf);
+            let mut rect = RECT {
+                left: cx - 40,
+                top: cy - 40,
+                right: cx + 40,
+                bottom: cy + 40,
+            };
+
+            let _ = DrawTextW(
+                self.hdc,
+                text_u16,
+                &mut rect,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP,
+            );
+
+            let _ = SelectObject(self.hdc, old_font);
+            let _ = DeleteObject(hfont);
+
+            let left = rect.left.max(0);
+            let right = rect.right.min(self.width);
+            let top = rect.top.max(0);
+            let bottom = rect.bottom.min(self.height);
+
+            for y in top..bottom {
+                for x in left..right {
+                    let idx = (y * self.width + x) as isize;
+                    let p = *self.bits.offset(idx);
+                    if (p & 0x00FFFFFF) != 0 {
+                        *self.bits.offset(idx) = 0xFF000000 | (p & 0x00FFFFFF);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn draw_icon_left(&mut self, icon_char: char, x: i32, y: i32, font_size: i32, color_rgb: u32) {
+        unsafe {
+            use windows::Win32::Graphics::Gdi::{
+                CreateFontW, DrawTextW, SetBkMode, SetTextColor, DT_LEFT, DT_NOCLIP, DT_SINGLELINE,
+                DT_VCENTER, FW_NORMAL, TRANSPARENT,
+            };
+
+            let font_name: Vec<u16> = "Segoe MDL2 Assets\0".encode_utf16().collect();
+            let hfont = CreateFontW(
+                font_size,
+                0,
+                0,
+                0,
+                FW_NORMAL.0 as i32,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                5,
+                0,
+                PCWSTR::from_raw(font_name.as_ptr()),
+            );
+
+            let old_font = SelectObject(self.hdc, hfont);
+            let _ = SetBkMode(self.hdc, TRANSPARENT);
+
+            let r = (color_rgb >> 16) & 0xFF;
+            let g = (color_rgb >> 8) & 0xFF;
+            let b = color_rgb & 0xFF;
+            let _ = SetTextColor(self.hdc, COLORREF(r | (g << 8) | (b << 16)));
+
+            let mut utf16_buf = [0u16; 2];
+            let text_u16 = icon_char.encode_utf16(&mut utf16_buf);
+            let mut rect = RECT {
+                left: x,
+                top: y - 20,
+                right: x + 40,
+                bottom: y + 20,
+            };
+
+            let _ = DrawTextW(
+                self.hdc,
+                text_u16,
+                &mut rect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP,
+            );
+
+            let _ = SelectObject(self.hdc, old_font);
+            let _ = DeleteObject(hfont);
+
+            let left = rect.left.max(0);
+            let right = rect.right.min(self.width);
+            let top = rect.top.max(0);
+            let bottom = rect.bottom.min(self.height);
+
+            for cy in top..bottom {
+                for cx in left..right {
+                    let idx = (cy * self.width + cx) as isize;
+                    let p = *self.bits.offset(idx);
+                    if (p & 0x00FFFFFF) != 0 {
+                        *self.bits.offset(idx) = 0xFF000000 | (p & 0x00FFFFFF);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, width: i32, argb: u32) {
+        let dx = (x1 - x0) as f32;
+        let dy = (y1 - y0) as f32;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len == 0.0 {
+            self.fill_rounded_rect(x0 - width / 2, y0 - width / 2, x0 + width / 2, y0 + width / 2, width / 2, argb);
+            return;
+        }
+
+        let steps = (len * 2.0).ceil() as i32;
+        let half_w = (width as f32 / 2.0).max(0.5);
+
+        for i in 0..=steps {
+            let t = i as f32 / steps as f32;
+            let cx = x0 as f32 + dx * t;
+            let cy = y0 as f32 + dy * t;
+            let min_x = (cx - half_w).floor() as i32;
+            let max_x = (cx + half_w).ceil() as i32;
+            let min_y = (cy - half_w).floor() as i32;
+            let max_y = (cy + half_w).ceil() as i32;
+
+            for y in min_y..=max_y {
+                for x in min_x..=max_x {
+                    let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+                    let cov = (half_w + 0.5 - d).clamp(0.0, 1.0);
+                    if cov > 0.0 {
+                        self.blend_pixel(x, y, argb, cov);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn draw_dotted_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, width: i32, argb: u32) {
+        let dx = (x1 - x0) as f32;
+        let dy = (y1 - y0) as f32;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len == 0.0 { return; }
+
+        let dot_spacing = 6.0;
+        let num_dots = (len / dot_spacing) as i32;
+        for i in 0..=num_dots {
+            let t = (i as f32 * dot_spacing) / len;
+            if t > 1.0 { break; }
+            let cx = (x0 as f32 + dx * t) as i32;
+            let cy = (y0 as f32 + dy * t) as i32;
+            self.fill_rounded_rect(cx - width / 2, cy - width / 2, cx + width / 2 + 1, cy + width / 2 + 1, width / 2, argb);
+        }
+    }
+
+    pub fn draw_polyline(&mut self, pts: &[(i32, i32)], width: i32, argb: u32) {
+        if pts.len() < 2 { return; }
+        for i in 0..pts.len() - 1 {
+            self.draw_line(pts[i].0, pts[i].1, pts[i + 1].0, pts[i + 1].1, width, argb);
+        }
+    }
+
+    pub fn draw_polygon_fill(&mut self, pts: &[(i32, i32)], argb: u32) {
+        if pts.len() < 3 { return; }
+        let min_y = pts.iter().map(|p| p.1).min().unwrap_or(0).max(0);
+        let max_y = pts.iter().map(|p| p.1).max().unwrap_or(0).min(self.height - 1);
+
+        for y in min_y..=max_y {
+            let mut nodes = Vec::new();
+            let mut j = pts.len() - 1;
+            for i in 0..pts.len() {
+                let (x0, y0) = (pts[i].0 as f32, pts[i].1 as f32);
+                let (x1, y1) = (pts[j].0 as f32, pts[j].1 as f32);
+                let yf = y as f32 + 0.5;
+
+                if (y0 < yf && y1 >= yf) || (y1 < yf && y0 >= yf) {
+                    let node_x = x0 + (yf - y0) / (y1 - y0) * (x1 - x0);
+                    nodes.push(node_x);
+                }
+                j = i;
+            }
+            nodes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+            for chunk in nodes.chunks(2) {
+                if chunk.len() == 2 {
+                    let x_start = (chunk[0].floor() as i32).max(0);
+                    let x_end = (chunk[1].ceil() as i32).min(self.width);
+                    for x in x_start..x_end {
+                        self.blend_pixel(x, y, argb, 1.0);
                     }
                 }
             }
@@ -409,7 +645,10 @@ pub fn parse_hex_color(hex: &str) -> u32 {
     match s.len() {
         6 => {
             if let Ok(val) = u32::from_str_radix(s, 16) {
-                0xFF000000 | ((val & 0xFF) << 16) | (val & 0xFF00) | ((val >> 16) & 0xFF)
+                let r = (val >> 16) & 0xFF;
+                let g = (val >> 8) & 0xFF;
+                let b = val & 0xFF;
+                0xFF000000 | (r << 16) | (g << 8) | b
             } else {
                 0xFFFFFFFF
             }

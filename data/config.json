@@ -1,8 +1,8 @@
 {
-  "WIDGET_WIDTH": 66,
-  "WIDGET_HEIGHT": 26,
-  "WIDGET_X": 1700,
-  "WIDGET_Y": 1023,
+  "WIDGET_WIDTH": 59,
+  "WIDGET_HEIGHT": 28,
+  "WIDGET_X": null,
+  "WIDGET_Y": null,
   "OFFSET_FROM_RIGHT": 130,
   "OFFSET_FROM_TOP": null,
   "UPDATE_INTERVAL": 10,
@@ -12,7 +12,7 @@
   "CORNER_RADIUS": 4,
   "FILL_PADDING": 0,
   "FILL_RIGHT_EXTEND": 0,
-  "FONT_SIZE": 22,
+  "FONT_SIZE": 28,
   "RENDER_SCALE": 8,
   "OUTLINE_WIDTH": 1,
   "POPUP_Y_OFFSET": 20,
@@ -21,7 +21,7 @@
   "POPUP_TEXT_SIZE": 12,
   "POPUP_ICON_SIZE": 16,
   "GRAPH_HEIGHT": 140,
-  "LOW_CRITICAL_PCT": 10,
+  "LOW_CRITICAL_PCT": 20,
   "rows": [
     {
       "id": "status",
