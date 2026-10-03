@@ -171,12 +171,12 @@ impl PopupController {
         let title_h = (30.0 * scale) as i32;
         let sep_h = (10.0 * scale) as i32;
         let btm_h = (38.0 * scale) as i32;
+        let rh = ((cfg.POPUP_TEXT_SIZE as f64 * 2.2).max(26.0) * scale) as i32;
 
         match self.page {
             PopupPage::Dashboard => {
                 let mut content_h = 0;
-                let rh = (26.0 * scale) as i32;
-                let gh = (130.0 * scale) as i32;
+                let gh = ((cfg.GRAPH_HEIGHT as f64).max(120.0) * scale) as i32;
 
                 for r in &cfg.rows {
                     if !r.visible {
@@ -191,22 +191,20 @@ impl PopupController {
                 pad * 2 + title_h + sep_h + content_h + sep_h + btm_h
             }
             PopupPage::Settings => {
-                // Steppers + Autostart + Customize Rows + Move + Reset
-                let rh = (28.0 * scale) as i32;
-                pad * 2 + title_h + sep_h + (10 * rh) + (20.0 * scale) as i32 + sep_h + btm_h
+                // 1 toggle + 9 steppers + 3 buttons
+                let rh_set = ((cfg.POPUP_TEXT_SIZE as f64 * 2.2).max(28.0) * scale) as i32;
+                pad * 2 + title_h + sep_h + (13 * rh_set) + (26.0 * scale) as i32
             }
             PopupPage::RowsConfig => {
                 let n = cfg.rows.len() as i32;
-                let rh = (26.0 * scale) as i32;
-                pad * 2 + title_h + sep_h + (n * rh) + (10.0 * scale) as i32 + sep_h + btm_h
+                pad * 2 + title_h + sep_h + (n * rh) + (10.0 * scale) as i32
             }
             PopupPage::Apps => {
-                let rh = (26.0 * scale) as i32;
-                pad * 2 + title_h + sep_h + (9 * rh) + (24.0 * scale) as i32 + sep_h + btm_h
+                pad * 2 + title_h + sep_h + (10 * rh) + (20.0 * scale) as i32
             }
             PopupPage::About => {
-                let rh = (24.0 * scale) as i32;
-                pad * 2 + title_h + sep_h + (8 * rh) + (44.0 * scale) as i32 + sep_h + btm_h
+                // Title (42px) + Card (112px) + Spacing (16px) + Buttons (32px) + Spacing (16px) + Footer (20px)
+                pad * 2 + title_h + sep_h + (238.0 * scale) as i32
             }
             PopupPage::Closed => (400.0 * scale) as i32,
         }
@@ -274,9 +272,10 @@ impl PopupController {
         buf.outline_rounded_rect(0, 0, w, h, r, 1, border_color);
 
         let pad = (16.0 * scale) as i32;
-        let title_size = (16.0 * scale) as i32;
-        let text_size = (12.0 * scale) as i32;
-        let icon_size = (14.0 * scale) as i32;
+        let title_size = ((cfg.POPUP_TITLE_SIZE as f64) * scale).round() as i32;
+        let text_size = ((cfg.POPUP_TEXT_SIZE as f64) * scale).round() as i32;
+        let icon_size = ((cfg.POPUP_ICON_SIZE as f64) * scale).round() as i32;
+        let rh = ((cfg.POPUP_TEXT_SIZE as f64 * 2.2).max(26.0) * scale) as i32;
         let mut y = pad;
 
         match self.page {
@@ -291,7 +290,6 @@ impl PopupController {
                 buf.draw_line(pad, y, w - pad, y, 1, border_color);
                 y += (10.0 * scale) as i32;
 
-                let rh = (26.0 * scale) as i32;
                 let bat_opt = &self.last_battery;
                 let pct = bat_opt.as_ref().map(|b| b.percent).unwrap_or(50.0);
                 let plugged = bat_opt.as_ref().map(|b| b.power_plugged).unwrap_or(false);
@@ -345,7 +343,13 @@ impl PopupController {
                         }
                         "time" => {
                             let label = if plugged { "Time to Full" } else { "Time Remaining" };
-                            let time_str = bat_opt.as_ref().and_then(|b| b.secsleft).and_then(battery::format_time).unwrap_or_else(|| if pct >= 100.0 { "Full".into() } else { "—".into() });
+                            let time_str = if plugged && pct >= 100.0 {
+                                "Full".into()
+                            } else if let Some(secs) = bat_opt.as_ref().and_then(|b| b.secsleft) {
+                                battery::format_time(secs).unwrap_or_else(|| "—".into())
+                            } else {
+                                "—".into()
+                            };
                             buf.draw_icon_left(ICON_TIME, pad, my, icon_size, icon_color);
                             buf.draw_text_aligned(label, pad + (24.0 * scale) as i32, my, text_size, fg2_color, false);
                             buf.draw_text_aligned(&time_str, w - pad, my, text_size, fg_color, true);
@@ -371,6 +375,14 @@ impl PopupController {
                             buf.draw_icon_left(ICON_ELAPSED, pad, my, icon_size, icon_color);
                             buf.draw_text_aligned("Elapsed", pad + (24.0 * scale) as i32, my, text_size, fg2_color, false);
                             buf.draw_text_aligned(&el_str, w - pad, my, text_size, fg_color, true);
+                            y += rh;
+                        }
+                        "screen_on" => {
+                            let son_secs = battery::get_screen_on_seconds().unwrap_or(0);
+                            let son_str = battery::format_duration_short(son_secs);
+                            buf.draw_icon_left(ICON_SCREEN, pad, my, icon_size, icon_color);
+                            buf.draw_text_aligned("Screen On", pad + (24.0 * scale) as i32, my, text_size, fg2_color, false);
+                            buf.draw_text_aligned(&son_str, w - pad, my, text_size, fg_color, true);
                             y += rh;
                         }
                         "battery_estimate" => {
@@ -405,7 +417,7 @@ impl PopupController {
                         }
                         "graph" => {
                             // Graph Box Container
-                            let gh = (130.0 * scale) as i32;
+                            let gh = ((cfg.GRAPH_HEIGHT as f64).max(120.0) * scale) as i32;
                             let g_y0 = y + (4.0 * scale) as i32;
                             let g_y1 = g_y0 + gh;
                             let g_container = parse_hex_color(&theme.graph_container);
@@ -441,7 +453,7 @@ impl PopupController {
                             } else {
                                 ""
                             };
-                            buf.draw_text_aligned(center_label, w / 2, g_y0 + (10.0 * scale) as i32, l_fnt, accent_color, false);
+                            buf.draw_text(center_label, w / 2, g_y0 + (10.0 * scale) as i32, l_fnt, accent_color, false);
 
                             // Geometry for plot curve
                             let gx0 = pad + (8.0 * scale) as i32;
@@ -451,55 +463,79 @@ impl PopupController {
                             let gw = (gx1 - gx0).max(1);
                             let gh_plot = (gy1 - gy0).max(1);
 
-                            let pts_data: Vec<(f64, f64, bool)> = if is_live {
-                                state.history.iter().filter_map(|v| {
-                                    if v.len() >= 3 {
-                                        Some((v[0], v[1], v[2] > 0.5))
-                                    } else {
-                                        None
-                                    }
-                                }).collect()
-                            } else if let Some(sess) = state.sessions.get(self.graph_index as usize) {
-                                sess.points.iter().filter_map(|v| {
-                                    if v.len() >= 3 {
-                                        Some((v[0], v[1], v[2] > 0.5))
-                                    } else {
-                                        None
-                                    }
-                                }).collect()
-                            } else {
-                                Vec::new()
-                            };
-
                             let is_charging_plot = if is_live { plugged } else {
                                 state.sessions.get(self.graph_index as usize).map(|s| s.session_type == "charging").unwrap_or(false)
                             };
+
+                            let (elapsed_s, secs_right, sess_start_ep, sess_end_ep, pts_data) = if is_live {
+                                let now_ep = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+                                let start_ep = if plugged {
+                                    state.charge_start_epoch.unwrap_or(now_ep)
+                                } else {
+                                    state.discharge_start_epoch.unwrap_or(now_ep)
+                                };
+                                let el = (now_ep - start_ep).max(0.0);
+                                let sr = bat_opt.as_ref().and_then(|b| b.secsleft).unwrap_or(0).max(0) as f64;
+                                let pts: Vec<(f64, f64, bool)> = state.history.iter().filter_map(|v| {
+                                    if v.len() >= 3 {
+                                        Some((v[0], v[1], v[2] > 0.5))
+                                    } else {
+                                        None
+                                    }
+                                }).collect();
+                                (el, sr, start_ep, None, pts)
+                            } else if let Some(sess) = state.sessions.get(self.graph_index as usize) {
+                                let el = (sess.end - sess.start).max(0.0);
+                                let pts: Vec<(f64, f64, bool)> = sess.points.iter().filter_map(|v| {
+                                    if v.len() >= 3 {
+                                        Some((v[0], v[1], v[2] > 0.5))
+                                    } else {
+                                        None
+                                    }
+                                }).collect();
+                                (el, 0.0, sess.start, Some(sess.end), pts)
+                            } else {
+                                (0.0, 0.0, 0.0, None, Vec::new())
+                            };
+
+                            let pwr_mode = system::get_power_mode();
+                            let is_saver = pwr_mode == "Energy Saver" || pwr_mode == "Battery Saver" || pwr_mode == "Best power efficiency";
 
                             let (fill_col, line_col) = if is_charging_plot {
                                 (parse_hex_color(&cfg.colors.graph.charging_fill), parse_hex_color(&cfg.colors.graph.charging_line))
                             } else if pct <= cfg.LOW_CRITICAL_PCT as f64 {
                                 (parse_hex_color(&cfg.colors.graph.low_fill), parse_hex_color(&cfg.colors.graph.low_line))
-                            } else if pct <= cfg.LOW_PCT as f64 || system::get_power_mode() == "Battery Saver" {
+                            } else if pct <= cfg.LOW_PCT as f64 || is_saver {
                                 (0x64f0be28, 0xF0f0be28) // Amber / Yellow Saver fill & line
                             } else {
                                 (parse_hex_color(&cfg.colors.graph.normal_fill), parse_hex_color(&cfg.colors.graph.normal_line))
                             };
 
+                            let total_s = (elapsed_s + secs_right).max(60.0);
+                            let now_px = (gx0 as f64 + (elapsed_s / total_s).clamp(0.0, 1.0) * gw as f64).round() as i32;
+                            let cur_y = gy1 - ((pct.clamp(0.0, 100.0) / 100.0) * gh_plot as f64).round() as i32;
+
                             let mut last_px = gx0;
-                            let mut last_py = gy1;
+                            let mut last_py = cur_y;
 
                             if pts_data.len() >= 2 {
                                 let mut poly_pts = Vec::new();
                                 let mut line_pts = Vec::new();
                                 poly_pts.push((gx0, gy1));
 
-                                let n = pts_data.len();
-                                for (i, (_t, p, _pl)) in pts_data.iter().enumerate() {
-                                    let cur_x = gx0 + (i as i32 * gw) / (n - 1).max(1) as i32;
-                                    let cur_y = gy1 - ((*p / 100.0) * gh_plot as f64) as i32;
-                                    poly_pts.push((cur_x, cur_y));
-                                    line_pts.push((cur_x, cur_y));
+                                for (t, p, _) in &pts_data {
+                                    let off = (t - sess_start_ep).max(0.0);
+                                    let cur_x = (gx0 as f64 + (off / total_s).clamp(0.0, 1.0) * gw as f64).round() as i32;
+                                    let cur_y_pt = gy1 - ((p.clamp(0.0, 100.0) / 100.0) * gh_plot as f64).round() as i32;
+                                    poly_pts.push((cur_x, cur_y_pt));
+                                    line_pts.push((cur_x, cur_y_pt));
                                     last_px = cur_x;
+                                    last_py = cur_y_pt;
+                                }
+                                if is_live {
+                                    poly_pts.push((now_px, cur_y));
+                                    line_pts.push((now_px, cur_y));
+                                    last_px = now_px;
                                     last_py = cur_y;
                                 }
                                 poly_pts.push((last_px, gy1));
@@ -509,16 +545,18 @@ impl PopupController {
 
                                 // Start % label
                                 let start_pct = pts_data[0].1;
-                                buf.draw_text_aligned(&format!("{:.0}%", start_pct), gx0 + 4, gy1 - ((start_pct / 100.0) * gh_plot as f64) as i32 - 10, l_fnt, fg2_color, false);
+                                let start_y = gy1 - ((start_pct.clamp(0.0, 100.0) / 100.0) * gh_plot as f64).round() as i32;
+                                if start_y > gy0 + (14.0 * scale) as i32 {
+                                    buf.draw_text_aligned(&format!("{:.0}%", start_pct), gx0 + 4, start_y - 8, l_fnt, fg2_color, false);
+                                }
                             } else {
-                                let cy_pt = gy1 - ((pct / 100.0) * gh_plot as f64) as i32;
-                                buf.draw_line(gx0, cy_pt, gx1, cy_pt, 2, line_col);
-                                last_px = gx0;
-                                last_py = cy_pt;
+                                buf.draw_line(gx0, cur_y, now_px.max(gx0 + 10), cur_y, 2, line_col);
+                                last_px = now_px;
+                                last_py = cur_y;
                             }
 
                             // Dotted projection line if live session
-                            if is_live && bat_opt.as_ref().and_then(|b| b.secsleft).unwrap_or(0) > 0 {
+                            if is_live && secs_right > 0.0 {
                                 let end_y = if plugged { gy1 - gh_plot } else { gy1 };
                                 buf.draw_dotted_line(last_px, last_py, gx1, end_y, 2, line_col);
                             }
@@ -530,29 +568,28 @@ impl PopupController {
                             // Timeline Labels below X-Axis
                             let lbl_y = gy1 + (4.0 * scale) as i32;
                             if is_live {
-                                if let Some((t0, _, _)) = pts_data.first() {
-                                    buf.draw_text_aligned(&format_epoch_hm(*t0), gx0, lbl_y, l_fnt, fg2_color, false);
-                                }
-                                if let Some(secs) = bat_opt.as_ref().and_then(|b| b.secsleft) {
-                                    if secs > 0 {
-                                        let now_ep = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
-                                        let end_ep = now_ep + secs as f64;
-                                        buf.draw_text_aligned(&format_epoch_hm(end_ep), gx1, lbl_y, l_fnt, fg2_color, true);
-                                    }
-                                }
-                                if let Some(el) = state.discharge_start_epoch.or(state.charge_start_epoch) {
+                                buf.draw_text_aligned(&format_epoch_hm(sess_start_ep), gx0, lbl_y, l_fnt, fg2_color, false);
+                                if secs_right > 0.0 {
                                     let now_ep = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
-                                    let dur_s = (now_ep - el).max(0.0) as u64;
-                                    if let Some(dur_str) = battery::format_time(dur_s as i64) {
-                                        buf.draw_text_aligned(&dur_str, (gx0 + gx1) / 2, lbl_y, l_fnt, fg2_color, false);
-                                    }
+                                    let end_ep = now_ep + secs_right;
+                                    buf.draw_text_aligned(&format_epoch_hm(end_ep), gx1, lbl_y, l_fnt, fg2_color, true);
                                 }
-                            } else if let Some(sess) = state.sessions.get(self.graph_index as usize) {
-                                buf.draw_text_aligned(&format_epoch_hm(sess.start), gx0, lbl_y, l_fnt, fg2_color, false);
-                                buf.draw_text_aligned(&format_epoch_hm(sess.end), gx1, lbl_y, l_fnt, fg2_color, true);
-                                let dur = (sess.end - sess.start).max(0.0) as u64;
-                                if let Some(dur_str) = battery::format_time(dur as i64) {
-                                    buf.draw_text_aligned(&dur_str, (gx0 + gx1) / 2, lbl_y, l_fnt, fg2_color, false);
+                                let total_est = elapsed_s + (if secs_right > 0.0 { secs_right } else { 0.0 });
+                                if total_est > 60.0 {
+                                    let h_ = (total_est as u64) / 3600;
+                                    let m_ = ((total_est as u64) % 3600) / 60;
+                                    let dur_str = if h_ > 0 { format!("{}h {:02}m", h_, m_) } else { format!("{}m", m_) };
+                                    buf.draw_text(&dur_str, (gx0 + gx1) / 2, lbl_y + (6.0 * scale) as i32, l_fnt, fg2_color, false);
+                                }
+                            } else if let Some(end_ep) = sess_end_ep {
+                                buf.draw_text_aligned(&format_epoch_hm(sess_start_ep), gx0, lbl_y, l_fnt, fg2_color, false);
+                                buf.draw_text_aligned(&format_epoch_hm(end_ep), gx1, lbl_y, l_fnt, fg2_color, true);
+                                let dur = (end_ep - sess_start_ep).max(0.0) as u64;
+                                if dur > 60 {
+                                    let h_ = dur / 3600;
+                                    let m_ = (dur % 3600) / 60;
+                                    let dur_str = if h_ > 0 { format!("{}h {:02}m", h_, m_) } else { format!("{}m", m_) };
+                                    buf.draw_text(&dur_str, (gx0 + gx1) / 2, lbl_y + (6.0 * scale) as i32, l_fnt, fg2_color, false);
                                 }
                             }
 
@@ -604,20 +641,20 @@ impl PopupController {
                 buf.draw_line(pad, y, w - pad, y, 1, border_color);
                 y += (10.0 * scale) as i32;
 
-                let rh = (28.0 * scale) as i32;
+                let rh_set = ((cfg.POPUP_TEXT_SIZE as f64 * 2.2).max(28.0) * scale) as i32;
 
                 // 1. Start with Windows Toggle
                 let autostart_on = system::is_autostart_enabled();
-                let my = y + rh / 2;
+                let my = y + rh_set / 2;
                 buf.draw_icon_left(if autostart_on { ICON_CHECK_ON } else { ICON_CHECK_OFF }, pad, my, icon_size, if autostart_on { accent_color } else { fg2_color });
                 buf.draw_text_aligned("Start with Windows", pad + (24.0 * scale) as i32, my, text_size, fg_color, false);
                 buf.draw_text_aligned(if autostart_on { "[ ON ]" } else { "[ OFF ]" }, w - pad, my, text_size, if autostart_on { 0x0032CD32 } else { fg2_color }, true);
-                self.hit_regions.push((RECT { left: pad, top: y, right: w - pad, bottom: y + rh }, "toggle_autostart".into()));
-                y += rh;
+                self.hit_regions.push((RECT { left: pad, top: y, right: w - pad, bottom: y + rh_set }, "toggle_autostart".into()));
+                y += rh_set;
 
                 // Helper for stepper row rendering
                 let mut draw_stepper = |label: &str, val_str: &str, key_dec: &str, key_inc: &str, key_rst: &str, cur_y: &mut i32| {
-                    let smy = *cur_y + rh / 2;
+                    let smy = *cur_y + rh_set / 2;
                     buf.draw_text_aligned(label, pad + (6.0 * scale) as i32, smy, text_size, fg2_color, false);
 
                     let btn_w = (20.0 * scale) as i32;
@@ -628,49 +665,50 @@ impl PopupController {
 
                     // Reset icon
                     buf.draw_icon(ICON_RESET, rst_x, smy, (12.0 * scale) as i32, fg2_color);
-                    self.hit_regions.push((RECT { left: rst_x - 10, top: *cur_y, right: rst_x + 10, bottom: *cur_y + rh }, key_rst.into()));
+                    self.hit_regions.push((RECT { left: rst_x - 10, top: *cur_y, right: rst_x + 10, bottom: *cur_y + rh_set }, key_rst.into()));
 
                     // [+] icon
                     buf.draw_icon(ICON_PLUS, inc_x, smy, (12.0 * scale) as i32, icon_color);
-                    self.hit_regions.push((RECT { left: inc_x - 10, top: *cur_y, right: inc_x + 10, bottom: *cur_y + rh }, key_inc.into()));
+                    self.hit_regions.push((RECT { left: inc_x - 10, top: *cur_y, right: inc_x + 10, bottom: *cur_y + rh_set }, key_inc.into()));
 
                     // Value
                     buf.draw_text_aligned(val_str, val_x, smy, text_size - 1, fg_color, false);
 
                     // [-] icon
                     buf.draw_icon(ICON_MINUS, dec_x, smy, (12.0 * scale) as i32, icon_color);
-                    self.hit_regions.push((RECT { left: dec_x - 10, top: *cur_y, right: dec_x + 10, bottom: *cur_y + rh }, key_dec.into()));
+                    self.hit_regions.push((RECT { left: dec_x - 10, top: *cur_y, right: dec_x + 10, bottom: *cur_y + rh_set }, key_dec.into()));
 
-                    *cur_y += rh;
+                    *cur_y += rh_set;
                 };
 
+                draw_stepper("Popup Font Size", &format!("{}pt", cfg.POPUP_TEXT_SIZE), "dec_popup_font", "inc_popup_font", "rst_popup_font", &mut y);
                 draw_stepper("Popup Refresh", &format!("{:.1}s", cfg.POPUP_REFRESH_INTERVAL), "dec_popup_ref", "inc_popup_ref", "rst_popup_ref", &mut y);
                 draw_stepper("Icon Refresh", &format!("{}s", cfg.UPDATE_INTERVAL), "dec_poll", "inc_poll", "rst_poll", &mut y);
                 draw_stepper("Icon Width", &format!("{}px", cfg.WIDGET_WIDTH), "dec_width", "inc_width", "rst_width", &mut y);
                 draw_stepper("Icon Height", &format!("{}px", cfg.WIDGET_HEIGHT.unwrap_or(26)), "dec_height", "inc_height", "rst_height", &mut y);
-                draw_stepper("Font Size", &format!("{}pt", cfg.FONT_SIZE), "dec_font", "inc_font", "rst_font", &mut y);
+                draw_stepper("Icon Font Size", &format!("{}pt", cfg.FONT_SIZE), "dec_font", "inc_font", "rst_font", &mut y);
                 draw_stepper("Corner Radius", &format!("{}px", cfg.CORNER_RADIUS), "dec_radius", "inc_radius", "rst_radius", &mut y);
                 draw_stepper("Icon Offset Right", &format!("{}px", cfg.OFFSET_FROM_RIGHT), "dec_offset", "inc_offset", "rst_offset", &mut y);
                 draw_stepper("Critical Low %", &format!("{}%", cfg.LOW_CRITICAL_PCT), "dec_crit", "inc_crit", "rst_crit", &mut y);
 
                 // Customize Rows Button
                 y += (4.0 * scale) as i32;
-                buf.fill_rounded_rect(pad, y, w - pad, y + rh, 6, hover_color);
-                buf.draw_text_aligned("Customize Rows & Order >", pad + (12.0 * scale) as i32, y + rh / 2, text_size, fg_color, false);
-                self.hit_regions.push((RECT { left: pad, top: y, right: w - pad, bottom: y + rh }, "open_rows_config".into()));
-                y += rh + (6.0 * scale) as i32;
+                buf.fill_rounded_rect(pad, y, w - pad, y + rh_set, 6, hover_color);
+                buf.draw_text_aligned("Customize Rows & Order >", pad + (12.0 * scale) as i32, y + rh_set / 2, text_size, fg_color, false);
+                self.hit_regions.push((RECT { left: pad, top: y, right: w - pad, bottom: y + rh_set }, "open_rows_config".into()));
+                y += rh_set + (6.0 * scale) as i32;
 
                 // Move Icon (Drag) Button
-                buf.fill_rounded_rect(pad, y, w - pad, y + rh, 6, hover_color);
-                buf.draw_icon_left(ICON_MOVE, pad + (10.0 * scale) as i32, y + rh / 2, icon_size, icon_color);
-                buf.draw_text_aligned("Move Icon on Taskbar", pad + (32.0 * scale) as i32, y + rh / 2, text_size, fg_color, false);
-                self.hit_regions.push((RECT { left: pad, top: y, right: w - pad, bottom: y + rh }, "move_icon_drag".into()));
-                y += rh + (8.0 * scale) as i32;
+                buf.fill_rounded_rect(pad, y, w - pad, y + rh_set, 6, hover_color);
+                buf.draw_icon_left(ICON_MOVE, pad + (10.0 * scale) as i32, y + rh_set / 2, icon_size, icon_color);
+                buf.draw_text_aligned("Move Icon on Taskbar", pad + (32.0 * scale) as i32, y + rh_set / 2, text_size, fg_color, false);
+                self.hit_regions.push((RECT { left: pad, top: y, right: w - pad, bottom: y + rh_set }, "move_icon_drag".into()));
+                y += rh_set + (6.0 * scale) as i32;
 
                 // Reset Defaults
-                buf.draw_icon_left(ICON_RESET, pad, y + rh / 2, (12.0 * scale) as i32, danger_color);
-                buf.draw_text_aligned("Reset all to Defaults", pad + (20.0 * scale) as i32, y + rh / 2, text_size - 1, danger_color, false);
-                self.hit_regions.push((RECT { left: pad, top: y, right: pad + 160, bottom: y + rh }, "reset_defaults".into()));
+                buf.draw_icon_left(ICON_RESET, pad, y + rh_set / 2, (12.0 * scale) as i32, danger_color);
+                buf.draw_text_aligned("Reset all to Defaults", pad + (20.0 * scale) as i32, y + rh_set / 2, text_size - 1, danger_color, false);
+                self.hit_regions.push((RECT { left: pad, top: y, right: pad + 160, bottom: y + rh_set }, "reset_defaults".into()));
             }
 
             PopupPage::RowsConfig => {
@@ -683,7 +721,6 @@ impl PopupController {
                 buf.draw_line(pad, y, w - pad, y, 1, border_color);
                 y += (10.0 * scale) as i32;
 
-                let rh = (26.0 * scale) as i32;
                 for (i, row) in cfg.rows.iter().enumerate() {
                     let my = y + rh / 2;
                     let chk_ic = if row.visible { ICON_CHECK_ON } else { ICON_CHECK_OFF };
@@ -733,8 +770,6 @@ impl PopupController {
 
                 buf.draw_line(pad, y, w - pad, y, 1, border_color);
                 y += (8.0 * scale) as i32;
-
-                let rh = (26.0 * scale) as i32;
 
                 // Header columns
                 let hmy = y + rh / 2;
@@ -802,36 +837,57 @@ impl PopupController {
                 y += (28.0 * scale) as i32;
 
                 buf.draw_line(pad, y, w - pad, y, 1, border_color);
-                y += (12.0 * scale) as i32;
+                y += (14.0 * scale) as i32;
 
-                buf.draw_text_aligned("WinCity Native (Rust Edition)", w / 2, y, title_size, fg_color, false);
+                // Header Title & Subtitle centered
+                buf.draw_text("WinCity Native", w / 2, y, title_size + (2.0 * scale) as i32, fg_color, true);
                 y += (20.0 * scale) as i32;
-                buf.draw_text_aligned("v1.1.0 • Ultra-low resource monitor", w / 2, y, text_size, fg2_color, false);
-                y += (24.0 * scale) as i32;
+                buf.draw_text("Rust Edition • v1.1.0 • Ultra-low overhead", w / 2, y, text_size - 1, fg2_color, false);
+                y += (22.0 * scale) as i32;
 
+                // Hardware Telemetry Card Container
+                let card_h = (112.0 * scale) as i32;
+                let c_bg = parse_hex_color(&theme.graph_container);
+                buf.fill_rounded_rect(pad, y, w - pad, y + card_h, 8, c_bg);
+                buf.outline_rounded_rect(pad, y, w - pad, y + card_h, 8, 1, border_color);
+
+                let mut cy_inner = y + (12.0 * scale) as i32;
                 let rh_sp = (18.0 * scale) as i32;
-                buf.draw_text_aligned("Hardware Telemetry:", pad, y, text_size, fg_color, false);
-                y += (20.0 * scale) as i32;
+                let c_pad = pad + (12.0 * scale) as i32;
+
+                buf.draw_icon_left(ICON_HEALTH, c_pad, cy_inner, (12.0 * scale) as i32, icon_color);
+                buf.draw_text_aligned("Hardware Telemetry", c_pad + (18.0 * scale) as i32, cy_inner, text_size, fg_color, false);
+                cy_inner += (20.0 * scale) as i32;
 
                 let des = self.hw_info.designed_mwh.map(|m| format!("{} mWh", m)).unwrap_or_else(|| "N/A".into());
                 let full = self.hw_info.full_mwh.map(|m| format!("{} mWh", m)).unwrap_or_else(|| "N/A".into());
-                buf.draw_text_aligned(&format!("• Designed Capacity: {}", des), pad + 8, y, text_size - 1, fg2_color, false);
-                y += rh_sp;
-                buf.draw_text_aligned(&format!("• Full Capacity: {}", full), pad + 8, y, text_size - 1, fg2_color, false);
-                y += rh_sp;
                 let health = battery::fmt_health(self.hw_info.designed_mwh, self.hw_info.full_mwh);
-                buf.draw_text_aligned(&format!("• Battery Health: {}", health), pad + 8, y, text_size - 1, fg2_color, false);
-                y += rh_sp;
                 let cyc = self.hw_info.cycle_count.map(|c| format!("{}", c)).unwrap_or_else(|| "N/A".into());
-                buf.draw_text_aligned(&format!("• Cycle Count: {}", cyc), pad + 8, y, text_size - 1, fg2_color, false);
-                y += (26.0 * scale) as i32;
+
+                buf.draw_text_aligned("• Designed Capacity:", c_pad, cy_inner, text_size - 1, fg2_color, false);
+                buf.draw_text_aligned(&des, w - c_pad, cy_inner, text_size - 1, fg_color, true);
+                cy_inner += rh_sp;
+
+                buf.draw_text_aligned("• Full Charge Capacity:", c_pad, cy_inner, text_size - 1, fg2_color, false);
+                buf.draw_text_aligned(&full, w - c_pad, cy_inner, text_size - 1, fg_color, true);
+                cy_inner += rh_sp;
+
+                buf.draw_text_aligned("• Battery Health:", c_pad, cy_inner, text_size - 1, fg2_color, false);
+                buf.draw_text_aligned(&health, w - c_pad, cy_inner, text_size - 1, fg_color, true);
+                cy_inner += rh_sp;
+
+                buf.draw_text_aligned("• Cycle Count:", c_pad, cy_inner, text_size - 1, fg2_color, false);
+                buf.draw_text_aligned(&cyc, w - c_pad, cy_inner, text_size - 1, fg_color, true);
+
+                y += card_h + (16.0 * scale) as i32;
 
                 // GitHub + Donate Buttons
                 let btn_w = (w - 2 * pad - (10.0 * scale) as i32) / 2;
-                let btn_h = (30.0 * scale) as i32;
+                let btn_h = (32.0 * scale) as i32;
 
                 // GitHub
                 buf.fill_rounded_rect(pad, y, pad + btn_w, y + btn_h, 6, hover_color);
+                buf.outline_rounded_rect(pad, y, pad + btn_w, y + btn_h, 6, 1, border_color);
                 buf.draw_icon_left(ICON_APPS, pad + (10.0 * scale) as i32, y + btn_h / 2, (12.0 * scale) as i32, icon_color);
                 buf.draw_text_aligned("GitHub", pad + (30.0 * scale) as i32, y + btn_h / 2, text_size, fg_color, false);
                 self.hit_regions.push((RECT { left: pad, top: y, right: pad + btn_w, bottom: y + btn_h }, "open_github".into()));
@@ -839,11 +895,12 @@ impl PopupController {
                 // Donate
                 let don_x0 = pad + btn_w + (10.0 * scale) as i32;
                 buf.fill_rounded_rect(don_x0, y, w - pad, y + btn_h, 6, hover_color);
-                buf.draw_text_aligned("☕ Donate", don_x0 + btn_w / 2, y + btn_h / 2, text_size, accent_color, false);
+                buf.outline_rounded_rect(don_x0, y, w - pad, y + btn_h, 6, 1, border_color);
+                buf.draw_text("☕ Donate", don_x0 + btn_w / 2, y + btn_h / 2, text_size, accent_color, false);
                 self.hit_regions.push((RECT { left: don_x0, top: y, right: w - pad, bottom: y + btn_h }, "open_donate".into()));
 
                 y += btn_h + (16.0 * scale) as i32;
-                buf.draw_text_aligned("Created with ❤️ by Ahmar Zaidi", w / 2, y, text_size - 1, fg2_color, false);
+                buf.draw_text("Created with ❤️ by Ahmar Zaidi", w / 2, y, text_size - 1, fg2_color, false);
             }
 
             _ => {}
@@ -977,6 +1034,27 @@ impl PopupController {
                         let cur = system::is_autostart_enabled();
                         system::set_autostart(!cur, self.config_mgr.base_dir());
                         self.redraw();
+                    }
+                    "inc_popup_font" => {
+                        {
+                            let mut cfg = self.config_mgr.config.lock().unwrap();
+                            cfg.POPUP_TEXT_SIZE = (cfg.POPUP_TEXT_SIZE + 1).min(24);
+                        }
+                        self.notify_widget_settings_changed();
+                    }
+                    "dec_popup_font" => {
+                        {
+                            let mut cfg = self.config_mgr.config.lock().unwrap();
+                            cfg.POPUP_TEXT_SIZE = (cfg.POPUP_TEXT_SIZE.saturating_sub(1)).max(8);
+                        }
+                        self.notify_widget_settings_changed();
+                    }
+                    "rst_popup_font" => {
+                        {
+                            let mut cfg = self.config_mgr.config.lock().unwrap();
+                            cfg.POPUP_TEXT_SIZE = 12;
+                        }
+                        self.notify_widget_settings_changed();
                     }
                     "inc_popup_ref" => {
                         {

@@ -39,11 +39,12 @@ def render_battery(W, H, bat, label=None, dark=True):
         label  = time_s if time_s else f"{pct:.0f}%"
 
     cw = config.COLORS_WIDGET
+    pwr = system.get_power_mode()
     if plugged:
         fill_col = cw["fill_charging"]
-    elif pct <= config.LOW_PCT:
+    elif pct <= getattr(config, "LOW_CRITICAL_PCT", 10):
         fill_col = cw["fill_low"]
-    elif system.get_power_mode() == "Battery Saver":
+    elif pct <= config.LOW_PCT or pwr in ("Battery Saver", "Energy Saver", "Best power efficiency"):
         fill_col = cw["fill_saver"]
     else:
         fill_col = cw["fill_normal"]

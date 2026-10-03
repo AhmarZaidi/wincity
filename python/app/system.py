@@ -50,12 +50,15 @@ def get_taskbar_rect():
 
 
 def is_dark_mode():
-    """Return True when Windows apps are using dark theme."""
+    """Return True when Windows taskbar/apps are using dark theme."""
     try:
         import winreg
         k = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
             r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-        val, _ = winreg.QueryValueEx(k, "AppsUseLightTheme")
+        try:
+            val, _ = winreg.QueryValueEx(k, "SystemUsesLightTheme")
+        except Exception:
+            val, _ = winreg.QueryValueEx(k, "AppsUseLightTheme")
         winreg.CloseKey(k)
         return val == 0
     except Exception:
@@ -69,8 +72,11 @@ def get_power_mode():
         scheme = (ctypes.c_byte * 16)()
         if ctypes.windll.powrprof.PowerGetEffectiveOverlayScheme(ctypes.byref(scheme)) == 0:
             g = _uuid.UUID(bytes_le=bytes(scheme))
-            if g == _uuid.UUID("{961cc777-2547-4f9d-8174-7d86181b8a7a}"):
-                return "Battery Saver"
+            if g in (
+                _uuid.UUID("{961cc777-2547-4f9d-8174-7d86181b8a7a}"),
+                _uuid.UUID("{3a5574dc-007b-40e3-9464-7c590d7324e0}"),
+            ):
+                return "Energy Saver"
             if g == _uuid.UUID("{ded574b5-45a0-4f42-8734-20b1de8d37b3}"):
                 return "Best Performance"
     except Exception:

@@ -12,7 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TrackPopupMenu, TranslateMessage, DispatchMessageW,
     HWND_TOPMOST, MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG,
     SW_HIDE, SW_SHOW, TPM_RIGHTBUTTON, WM_COMMAND,
-    WM_DESTROY, WM_LBUTTONUP, WM_MOUSEMOVE, WM_POWERBROADCAST, WM_RBUTTONUP, WM_TIMER,
+    WM_DESTROY, WM_LBUTTONUP, WM_MOUSEMOVE, WM_POWERBROADCAST, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER,
     WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
     REGISTER_NOTIFICATION_FLAGS,
 };
@@ -193,18 +193,35 @@ impl BatteryWidget {
             }
         }
 
-        let bat = battery::get_battery_basic();
-        if let Some(ref b) = bat {
-            let mut st = self.config_mgr.state.lock().unwrap();
-            st.record_history_point(b.percent, b.power_plugged);
+        let mut bat = battery::get_battery_basic();
+        if let Some(ref mut b) = bat {
+            if b.power_plugged && b.percent < 100.0 && b.secsleft.is_none() {
+                let hw = battery::query_battery_hw(false);
+                if let (Some(rate_mw), Some(full_mwh)) = (hw.rate_mw, hw.full_mwh.or(hw.designed_mwh)) {
+                    let rate = rate_mw.abs();
+                    if rate > 500 && full_mwh > 0 {
+                        let rem_mwh = (full_mwh as f64) * ((100.0 - b.percent).max(0.0) / 100.0);
+                        let est_secs = ((rem_mwh / (rate as f64)) * 3600.0) as i64;
+                        if est_secs > 0 && est_secs < 86400 {
+                            b.secsleft = Some(est_secs);
+                        }
+                    }
+                }
+            }
+
+            let transition = {
+                let mut st = self.config_mgr.state.lock().unwrap();
+                st.record_battery_update(b.percent, b.power_plugged)
+            };
+            if transition {
+                self.config_mgr.save_state();
+            }
         }
 
         let label = if self.show_percent {
             bat.as_ref().map(|b| format!("{:.0}%", b.percent))
         } else if let Some(ref b) = bat {
-            if b.power_plugged && b.percent < 100.0 {
-                b.secsleft.and_then(battery::format_time).or_else(|| Some(format!("{:.0}%", b.percent)))
-            } else if !b.power_plugged {
+            if b.secsleft.is_some() {
                 b.secsleft.and_then(battery::format_time).or_else(|| Some(format!("{:.0}%", b.percent)))
             } else {
                 Some(format!("{:.0}%", b.percent))
@@ -262,11 +279,12 @@ impl BatteryWidget {
         let outline = parse_hex_color(&theme.widget_outline);
         let text_col = parse_hex_color(&theme.widget_text);
 
+        let is_saver = power_mode == "Energy Saver" || power_mode == "Battery Saver" || power_mode == "Best power efficiency";
         let fill_col = if plugged {
             parse_hex_color(&cfg.colors.widget.fill_charging)
         } else if pct <= cfg.LOW_CRITICAL_PCT {
             parse_hex_color(&cfg.colors.widget.fill_low)
-        } else if pct <= cfg.LOW_PCT || power_mode == "Battery Saver" {
+        } else if pct <= cfg.LOW_PCT || is_saver {
             parse_hex_color(&cfg.colors.widget.fill_saver)
         } else {
             parse_hex_color(&cfg.colors.widget.fill_normal)
@@ -395,6 +413,14 @@ unsafe extern "system" fn widget_wnd_proc(
         WM_POWERBROADCAST => {
             widget.update_ui();
             LRESULT(1)
+        }
+        WM_SETTINGCHANGE => {
+            widget.last_draw_key = None;
+            widget.update_ui();
+            if let Some(ref mut popup) = widget.popup_controller {
+                popup.redraw();
+            }
+            LRESULT(0)
         }
         WM_APP_SETTINGS_CHANGED => {
             let _ = widget.config_mgr.reload_if_modified();

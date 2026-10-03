@@ -94,6 +94,27 @@ pub fn format_time_long(secs: i64) -> Option<String> {
     }
 }
 
+pub fn get_screen_on_seconds() -> Option<u64> {
+    unsafe {
+        let ms = windows::Win32::System::SystemInformation::GetTickCount64();
+        if ms > 0 {
+            Some(ms / 1000)
+        } else {
+            None
+        }
+    }
+}
+
+pub fn format_duration_short(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    if h > 0 {
+        format!("{}h {:02}m", h, m)
+    } else {
+        format!("{}m", m)
+    }
+}
+
 pub fn fmt_rate(rate_mw: Option<i32>) -> String {
     match rate_mw {
         Some(mw) => {

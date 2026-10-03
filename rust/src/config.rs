@@ -241,6 +241,8 @@ pub struct RuntimeState {
     #[serde(default)]
     pub charge_start_epoch: Option<f64>,
     #[serde(default)]
+    pub prev_plugged: Option<bool>,
+    #[serde(default)]
     pub show_percent: bool,
     #[serde(default)]
     pub history: Vec<Vec<f64>>,
@@ -253,16 +255,69 @@ fn default_schema() -> u32 { 1 }
 use std::time::SystemTime;
 
 impl RuntimeState {
-    pub fn record_history_point(&mut self, percent: f64, power_plugged: bool) {
+    pub fn record_battery_update(&mut self, percent: f64, power_plugged: bool) -> bool {
         let now_sec = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
 
+        let mut changed = false;
+
+        match self.prev_plugged {
+            None => {
+                if power_plugged {
+                    if self.charge_start_epoch.is_none() {
+                        self.charge_start_epoch = Some(now_sec);
+                    }
+                } else {
+                    if self.discharge_start_epoch.is_none() {
+                        self.discharge_start_epoch = Some(now_sec);
+                    }
+                }
+                self.prev_plugged = Some(power_plugged);
+                changed = true;
+            }
+            Some(prev) if prev != power_plugged => {
+                changed = true;
+                // 1. Snapshot previous session if it has points
+                if self.history.len() >= 2 {
+                    let sess_type = if prev { "charging" } else { "discharging" };
+                    let start = self.history.first().map(|p| p[0]).unwrap_or(now_sec);
+                    let end = self.history.last().map(|p| p[0]).unwrap_or(now_sec);
+                    self.sessions.push(SessionEntry {
+                        session_type: sess_type.to_string(),
+                        start,
+                        end,
+                        points: self.history.clone(),
+                    });
+                    if self.sessions.len() > 20 {
+                        self.sessions.remove(0);
+                    }
+                }
+
+                // 2. Clear history for new mode
+                self.history.clear();
+
+                // 3. Switch start epochs
+                if power_plugged {
+                    self.charge_start_epoch = Some(now_sec);
+                    self.discharge_start_epoch = None;
+                } else {
+                    self.discharge_start_epoch = Some(now_sec);
+                    self.charge_start_epoch = None;
+                }
+                self.prev_plugged = Some(power_plugged);
+            }
+            _ => {}
+        }
+
+        // Push current point
         self.history.push(vec![now_sec, percent, if power_plugged { 1.0 } else { 0.0 }]);
-        if self.history.len() > 300 {
+        if self.history.len() > 720 {
             self.history.remove(0);
         }
+
+        changed
     }
 }
 

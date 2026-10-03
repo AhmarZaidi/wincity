@@ -598,11 +598,12 @@ class BatteryPopup:
 
         # ── Colors: match widget fill colors ─────────────────────────────
         cw = config.COLORS_WIDGET
+        pwr = system.get_power_mode()
         if is_charging:
             base = cw.get("fill_charging", (50, 150, 240))
         elif current_pct <= getattr(config, "LOW_CRITICAL_PCT", 10):
             base = cw.get("fill_low", (220, 50, 50))
-        elif current_pct <= config.LOW_PCT:
+        elif current_pct <= config.LOW_PCT or pwr in ("Battery Saver", "Energy Saver", "Best power efficiency"):
             base = cw.get("fill_saver", (240, 190, 40))
         else:
             base = cw.get("fill_normal", (60, 200, 80))

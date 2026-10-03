@@ -32,10 +32,26 @@ Measured on Windows 11 with `scripts/benchmark.py`:
 
 ## Features
 
-- **Battery State Indicator**: Smooth rounded-corner battery icon overlaid on the Windows taskbar.
+- **Battery State Indicator**: Smooth rounded-corner battery icon overlaid on the Windows taskbar with customizable width, height, corner radius, and font size.
 - **Left-Click**: Instant toggle between remaining time and percentage display.
-- **Hover Popup**: Telemetry dashboard showing charge rate, designed/full capacity, battery health, cycle count, temperature, power mode, and scrolling history graph.
-- **Per-App Battery Attribution**: Estimates wattage impact by inspecting process CPU loads and correlating with instantaneous battery discharge rates.
+- **Hover Popup**: Telemetry dashboard showing:
+  - **Status**: Live state (*Fully Charged*, *Charging*, *Discharging*).
+  - **Power Mode**: Current Windows power mode (*Best power efficiency*, *Balanced*, *Best performance*).
+  - **Percentage & Energy**: Battery percentage with remaining capacity in Wh (*e.g., 25% (12.6 Wh)*).
+  - **Battery Health**: True health degradation percentage compared to designed capacity (*e.g., 66.2% (50Wh/76Wh)*).
+  - **Time Remaining / Time to Full**: Windows and hardware rate-estimated time to 100% full or 0% depletion.
+  - **Charge / Discharge Rate**: Instantaneous power flow in Watts (*+47.1 W* or *-12.4 W*).
+  - **Session Elapsed**: Time elapsed since charger was plugged in or unplugged.
+  - **Screen On Time**: System uptime session metric.
+  - **Est. Runtime**: Estimated battery runtime calculated from full capacity and live power draw.
+  - **Hardware Telemetry & Thermals**: Battery cycle count and temperature.
+  - **Session History Graph**: Real-time interactive charge/discharge graph with historic session browsing (< and > chevrons) and projected completion time.
+- **Per-App Battery Attribution**: Estimates wattage impact per process by inspecting process CPU loads and correlating with instantaneous battery discharge rates, with 1-click process termination.
+- **Dynamic Settings & Live Customization**:
+  - Popup Font Size stepper with responsive window height calculation.
+  - Drag-and-drop icon placement and fine-grained offset adjustments.
+  - Interactive row reordering and visibility toggles (Customize Rows page).
+  - Configurable polling rate, refresh intervals, and critical battery warnings.
 - **Smart Taskbar Integration**: Automatically respects dark/light theme, DPI scaling, and auto-hides during fullscreen apps and games.
 - **Zero SmartScreen Warnings**: Double-click ready without certificate warnings via native binary or Windows `.lnk` shortcuts.
 
@@ -59,7 +75,7 @@ wincity/
 │   └── banner.png
 ├── data/                    # Shared configuration and telemetry history
 │   ├── config.json          # Shared settings and color schemes
-│   └── state.json           # Runtime history & discharge state
+│   └── state.json           # Runtime history & session state
 ├── python/                  # Python implementation
 │   ├── app/                 # Modules: battery, render, popup, widget, system, startup
 │   ├── main.py              # Python entry point
@@ -106,7 +122,7 @@ This will generate **`WinCity.lnk`** directly in the project folder and on your 
 ## Auto-Start with Windows
 
 To have WinCity launch silently in the background on Windows login:
-- **In-App Menu:** Right-click the widget → Check **"Start with Windows"**.
+- **In-App Menu:** Hover the widget → Click Settings (⚙) → Toggle **"Start with Windows"**.
 - **CLI / Script:** Run `python scripts/setup_autostart.py` or use `run.bat setup`.
 
 ---
@@ -131,7 +147,7 @@ python scripts/benchmark.py --compare scripts/python_bench.json scripts/rust_ben
 ## Battery & Power Optimizations
 
 1. **Zero Subprocess Spawning**: Eliminated periodic PowerShell and CIM queries. Direct Win32 IOCTL device queries are used instead.
-2. **Render Caching**: Frames are only rendered and copied to the taskbar when telemetry or percentage changes.
+2. **Render Caching**: Frames are only rendered and copied to the taskbar when telemetry or percentage changes (0.00% idle CPU).
 3. **Timer Gating**: Telemetry timers and live process polls are suspended whenever the hover popup is closed.
 4. **Hardware Caching**: Static battery properties (designed mWh, full charge capacity, serial numbers) are queried once and cached.
 5. **Single-Instance Mutex**: Prevents duplicate running instances from consuming unnecessary battery.
@@ -141,9 +157,13 @@ python scripts/benchmark.py --compare scripts/python_bench.json scripts/rust_ben
 ## Shared Configuration
 
 Edit `data/config.json` (or use the in-app Settings page) to customize:
-- `LOW_PCT`: Percentage threshold for the red battery warning (default: `20`).
-- `OFFSET_FROM_RIGHT`: Taskbar horizontal position from the system tray.
-- `UPDATE_INTERVAL`: Polling interval in seconds when on battery.
+- `POPUP_TEXT_SIZE`: Popup font size in points (default: `13`).
+- `POPUP_REFRESH_INTERVAL`: Refresh interval of the popup in seconds (default: `1.0`).
+- `LOW_PCT`: Percentage threshold for the battery saver warning (default: `20`).
+- `LOW_CRITICAL_PCT`: Percentage threshold for the red battery warning (default: `10` or `20`).
+- `OFFSET_FROM_RIGHT`: Taskbar horizontal position from the system tray (default: `130`).
+- `UPDATE_INTERVAL`: Taskbar icon polling interval in seconds when on battery (default: `10`).
+- `rows`: Reorder and toggle visibility for all telemetry metrics and the graph.
 - `colors`: Customizable dark/light mode palette and graph colors.
 
 ---

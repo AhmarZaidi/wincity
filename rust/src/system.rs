@@ -1,6 +1,6 @@
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use windows::core::{w, GUID, PCWSTR};
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::RECT;
 use windows::Win32::UI::HiDpi::{
     GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -97,59 +97,81 @@ pub fn should_show_widget() -> bool {
 }
 
 pub fn is_dark_mode() -> bool {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
     use std::ffi::c_void;
-    #[repr(C)]
-    struct HKEY__ {
-        unused: i32,
-    }
-    type HKEY = *mut HKEY__;
-    const HKEY_CURRENT_USER: HKEY = 0x80000002u32 as usize as HKEY;
-    const RRF_RT_REG_DWORD: u32 = 0x00000010;
 
-    #[link(name = "advapi32")]
-    extern "system" {
-        fn RegGetValueW(
-            hkey: HKEY,
-            lpsubkey: *const u16,
-            lpvalue: *const u16,
-            dwflags: u32,
-            pdwtype: *mut u32,
-            pvdata: *mut c_void,
-            pcbdata: *mut u32,
-        ) -> i32;
-    }
-
-    let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\0"
-        .encode_utf16()
-        .collect();
-    let val_name: Vec<u16> = "AppsUseLightTheme\0".encode_utf16().collect();
-    let mut data: u32 = 0;
-    let mut data_size: u32 = std::mem::size_of::<u32>() as u32;
+    let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
 
     unsafe {
+        // 1. Check SystemUsesLightTheme (taskbar / system chrome)
+        let mut data: u32 = 0;
+        let mut data_size = std::mem::size_of::<u32>() as u32;
         let res = RegGetValueW(
             HKEY_CURRENT_USER,
-            subkey.as_ptr(),
-            val_name.as_ptr(),
+            subkey,
+            w!("SystemUsesLightTheme"),
             RRF_RT_REG_DWORD,
-            std::ptr::null_mut(),
-            &mut data as *mut u32 as *mut c_void,
-            &mut data_size,
+            None,
+            Some(&mut data as *mut u32 as *mut c_void),
+            Some(&mut data_size),
         );
-        if res == 0 {
-            data == 0
-        } else {
-            true // default dark
+        if res.is_ok() {
+            return data == 0;
+        }
+
+        // 2. Fallback to AppsUseLightTheme
+        let mut data_app: u32 = 0;
+        let mut data_app_size = std::mem::size_of::<u32>() as u32;
+        let res_app = RegGetValueW(
+            HKEY_CURRENT_USER,
+            subkey,
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut data_app as *mut u32 as *mut c_void),
+            Some(&mut data_app_size),
+        );
+        if res_app.is_ok() {
+            return data_app == 0;
         }
     }
+    true // default dark
 }
+
+type PowerGetEffectiveOverlaySchemeFn = unsafe extern "system" fn(*mut windows::core::GUID) -> windows::Win32::Foundation::WIN32_ERROR;
 
 pub fn get_power_mode() -> String {
     unsafe {
+        // 1. Windows 10/11 Power Overlay Scheme via powrprof.dll
+        let mod_name: Vec<u16> = "powrprof.dll\0".encode_utf16().collect();
+        let hmod = windows::Win32::System::LibraryLoader::LoadLibraryW(windows::core::PCWSTR::from_raw(mod_name.as_ptr()));
+        if let Ok(hmod) = hmod {
+            if !hmod.is_invalid() {
+                let proc_name = std::ffi::CString::new("PowerGetEffectiveOverlayScheme").unwrap();
+                let proc = windows::Win32::System::LibraryLoader::GetProcAddress(hmod, windows::core::PCSTR(proc_name.as_ptr() as _));
+                if let Some(proc) = proc {
+                    let func: PowerGetEffectiveOverlaySchemeFn = std::mem::transmute(proc);
+                    let mut scheme = windows::core::GUID::zeroed();
+                    if func(&mut scheme).0 == 0 {
+                        let guid_saver1 = windows::core::GUID::from_u128(0x961cc777_2547_4f9d_8174_7d86181b8a7a);
+                        let guid_saver2 = windows::core::GUID::from_u128(0x3a5574dc_007b_40e3_9464_7c590d7324e0);
+                        let guid_perf = windows::core::GUID::from_u128(0xded574b5_45a0_4f42_8734_20b1de8d37b3);
+
+                        if scheme == guid_saver1 || scheme == guid_saver2 {
+                            return "Energy Saver".to_string();
+                        } else if scheme == guid_perf {
+                            return "Best Performance".to_string();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Legacy Battery Saver flag
         let mut sps = windows::Win32::System::Power::SYSTEM_POWER_STATUS::default();
         if windows::Win32::System::Power::GetSystemPowerStatus(&mut sps).is_ok() {
             if sps.SystemStatusFlag == 1 {
-                return "Battery Saver".to_string();
+                return "Energy Saver".to_string();
             }
         }
     }
